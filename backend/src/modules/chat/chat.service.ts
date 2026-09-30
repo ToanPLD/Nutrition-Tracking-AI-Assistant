@@ -183,6 +183,99 @@ export class ChatService {
       },
     };
   }
+
+  async sendMessageStream(
+    accountId: number,
+    data: SendMessageDto,
+    onChunk: (chunk: string) => void
+  ) {
+    const userId = await profileService.getUserId(accountId);
+
+    let sessionId = data.sessionId;
+    if (!sessionId) {
+      const sessResult = await dbExecute('INSERT INTO chatsessions (user_id) VALUES (?)', [userId]);
+      sessionId = sessResult.insertId;
+    } else {
+      const existing = await dbQueryOne<any>(
+        'SELECT session_id FROM chatsessions WHERE session_id = ? AND user_id = ? LIMIT 1',
+        [sessionId, userId]
+      );
+      if (!existing) {
+        const sessResult = await dbExecute('INSERT INTO chatsessions (user_id) VALUES (?)', [userId]);
+        sessionId = sessResult.insertId;
+      }
+    }
+
+    // 1. Save user message
+    const userMsgResult = await dbExecute(
+      'INSERT INTO chatmessages (session_id, sender, message_text, image_url, image_name) VALUES (?, ?, ?, ?, ?)',
+      [sessionId, 'user', data.message, data.imageUrl || null, data.imageName || null]
+    );
+    const userMessageId = userMsgResult.insertId;
+
+    // 2. Load recent conversation history
+    const historyRows = await dbQuery<any[]>(
+      'SELECT sender, message_text FROM chatmessages WHERE session_id = ? ORDER BY message_id DESC LIMIT 6',
+      [sessionId]
+    );
+    const history = historyRows
+      .reverse()
+      .map((r) => ({ sender: r.sender as 'user' | 'ai', text: r.message_text }));
+
+    // 3. User profile context
+    const profile = await profileService.getProfile(accountId).catch(() => null);
+
+    // 4. Stream AI response from CalAI, falling back to generateResponse
+    let fullText = '';
+    let thinkingSteps: string[] | undefined;
+    let foodInsight: any;
+
+    try {
+      const stream = aiProviderService.streamCalAiAgent(data.message, history, profile);
+      for await (const chunk of stream) {
+        fullText += chunk;
+        onChunk(chunk);
+      }
+      thinkingSteps = ['Vector Search & FlashRank', 'GPT-4o-mini generation'];
+    } catch {
+      // Fallback to non-streaming cascade (CalAI -> Ollama -> Local)
+      const fallbackResp = await aiProviderService.generateResponse(data.message, history, profile);
+      fullText = fallbackResp.text;
+      thinkingSteps = fallbackResp.thinkingSteps;
+      foodInsight = fallbackResp.foodInsight;
+      onChunk(fullText);
+    }
+
+    // 5. Save completed AI message in database
+    const aiMsgResult = await dbExecute(
+      `INSERT INTO chatmessages (session_id, sender, message_text, thinking_steps, food_insight)
+       VALUES (?, 'ai', ?, ?, ?)`,
+      [
+        sessionId,
+        fullText,
+        thinkingSteps ? JSON.stringify(thinkingSteps) : null,
+        foodInsight ? JSON.stringify(foodInsight) : null,
+      ]
+    );
+    const aiMessageId = aiMsgResult.insertId;
+
+    return {
+      sessionId,
+      userMessage: {
+        messageId: userMessageId,
+        sender: 'user',
+        text: data.message,
+        imageUrl: data.imageUrl,
+      },
+      aiMessage: {
+        messageId: aiMessageId,
+        sender: 'ai',
+        text: fullText,
+        thinkingSteps,
+        foodInsight,
+      },
+    };
+  }
 }
 
 export const chatService = new ChatService();

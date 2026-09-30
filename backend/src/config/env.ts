@@ -34,4 +34,15 @@ export const ENV = {
 
   OLLAMA_BASE_URL: process.env.OLLAMA_BASE_URL || 'http://localhost:11434',
   OLLAMA_MODEL: process.env.OLLAMA_MODEL || 'llama3.2',
+
+  // Gemini API
+  GEMINI_API_KEY: process.env.GEMINI_API_KEY || '',
+  GEMINI_MODEL: process.env.GEMINI_MODEL || 'gemini-3.8-flash',
+
+  // Cloudflare R2 Image Storage
+  CLOUDFLARE_R2_ENDPOINT: process.env.CLOUDFLARE_R2_ENDPOINT || 'https://65af18d008d80bd6b17d94abb5976544.r2.cloudflarestorage.com',
+  CLOUDFLARE_R2_BUCKET: process.env.CLOUDFLARE_R2_BUCKET || 'images',
+  CLOUDFLARE_R2_TOKEN: process.env.CLOUDFLARE_R2_TOKEN || '',
+  CLOUDFLARE_R2_KEY: process.env.CLOUDFLARE_R2_KEY || '',
+  CLOUDFLARE_R2_PUBLIC_URL: process.env.CLOUDFLARE_R2_PUBLIC_URL || 'https://65af18d008d80bd6b17d94abb5976544.r2.cloudflarestorage.com/images',
 };

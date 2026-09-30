@@ -3,8 +3,12 @@ import json
 import threading
 from collections import OrderedDict
 
-import torch
-from sentence_transformers import SentenceTransformer
+try:
+    import torch
+    from sentence_transformers import SentenceTransformer
+except ImportError:
+    torch = None
+    SentenceTransformer = None
 
 from config.settings import settings
 from core.services.cache.redis_cache import RedisCache
@@ -51,9 +55,12 @@ class TextEmbeddingService:
     _shared_l2 = None
 
     def __init__(self):
-        print("🔥 Loading 768 embedding model (mpnet)...")
+        if SentenceTransformer is None:
+            raise RuntimeError("sentence-transformers or torch is not installed in the current environment.")
 
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        print("[INFO] Loading 768 embedding model (mpnet)...")
+
+        self.device = "cuda" if (torch and torch.cuda.is_available()) else "cpu"
 
         self.model = SentenceTransformer(
             "sentence-transformers/all-mpnet-base-v2",

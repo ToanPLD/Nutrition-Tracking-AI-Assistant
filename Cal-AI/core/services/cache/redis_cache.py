@@ -8,13 +8,16 @@ class RedisCache:
     COMPRESSED_PREFIX = b"zlib:"
 
     def __init__(self):
-
-        print("🔌 Connecting Redis...")
-        print("HOST:", settings.REDIS_HOST)
-        print("PORT:", settings.REDIS_PORT)
-
         self.client = None
         self.memory = {}
+
+        if not getattr(settings, "REDIS_ENABLED", False):
+            print("[INFO] Redis disabled, using in-memory cache.")
+            return
+
+        print("Connecting Redis...")
+        print("HOST:", settings.REDIS_HOST)
+        print("PORT:", settings.REDIS_PORT)
 
         try:
             self.client = redis.Redis(
@@ -22,12 +25,13 @@ class RedisCache:
                 port=settings.REDIS_PORT,
                 password=settings.REDIS_PASSWORD,
                 decode_responses=False,
-                socket_connect_timeout=5
+                socket_connect_timeout=2,
+                socket_timeout=2
             )
             self.client.ping()
-            print("✅ Redis connected")
+            print("[INFO] Redis connected")
         except Exception as e:
-            print("⚠️ Redis connection FAILED, using in-memory cache:", e)
+            print("[WARN] Redis connection FAILED, using in-memory cache:", e)
             self.client = None
 
     def _encode(self, value):

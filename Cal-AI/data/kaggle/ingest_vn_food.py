@@ -98,14 +98,14 @@ def _build_text(r: dict) -> str:
 
 
 def run():
-    print("🚀 ingest_vn_food — Vietnamese Nutrition Database (768-dim)")
-    print(f"📂 CSV: {CSV_PATH}")
+    print("[INFO] ingest_vn_food - Vietnamese Nutrition Database (768-dim)")
+    print(f"[INFO] CSV: {CSV_PATH}")
 
     if not CSV_PATH.exists():
         raise FileNotFoundError(f"CSV not found: {CSV_PATH}")
 
     records = _load_csv()
-    print(f"📊 Loaded {len(records)} rows")
+    print(f"[INFO] Loaded {len(records)} rows")
 
     qdrant = QdrantService()
     text_embed = TextEmbeddingService()
@@ -148,7 +148,7 @@ def run():
 
         if len(batch) >= UPSERT_BATCH:
             qdrant.upsert_generic(COLLECTION, batch)
-            print(f"  ✅ Upserted: {total}")
+            print(f"  [OK] Upserted: {total}")
             batch.clear()
 
     # flush remaining texts
@@ -164,7 +164,7 @@ def run():
     if batch:
         qdrant.upsert_generic(COLLECTION, batch)
 
-    print(f"\n🎯 DONE ingest_vn_food → {total} records in '{COLLECTION}'")
+    print(f"\n[DONE] ingest_vn_food -> {total} records in '{COLLECTION}'")
 
 
 if __name__ == "__main__":

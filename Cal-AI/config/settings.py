@@ -9,18 +9,19 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    QDRANT_URL: str
-    QDRANT_API_KEY: str
+    QDRANT_URL: str = "http://localhost:6333"
+    QDRANT_API_KEY: str = ""
 
-    REDIS_HOST: str
-    REDIS_PORT: int
-    REDIS_PASSWORD: str
+    REDIS_HOST: str = "127.0.0.1"
+    REDIS_PORT: int = 6379
+    REDIS_PASSWORD: str = ""
+    REDIS_ENABLED: bool = False
 
     TEXT_EMBEDDING_MODEL: str = "sentence-transformers/all-mpnet-base-v2"  
-    IMAGE_EMBEDDING_MODEL: str = "openai/clip-vit-base-patch32"          
+    IMAGE_EMBEDDING_MODEL: str = "Qwen/Qwen3-VL-Embedding-8B"          
 
     TEXT_VECTOR_DIM: int = 768
-    IMAGE_VECTOR_DIM: int = 512
+    IMAGE_VECTOR_DIM: int = 4096
 
     TEXT_COLLECTIONS: List[str] = [
         "beverage_text_vectors_768",
@@ -138,11 +139,21 @@ class Settings(BaseSettings):
     VISION_QDRANT_MIN_SCORE: float = 0.18
     VISION_QDRANT_SCORE_WEIGHT: float = 0.35
 
-    LLM_MODEL: str = "qcwind/qwen2.5-7B-instruct-Q4_K_M:latest"
-    LLM_API_URL: str = "http://localhost:11434/api/generate"
-    LLM_BACKEND: str = "ollama"  # ollama | openai
-    LLM_TIMEOUT_SECONDS: float = 240.0
-    LLM_NUM_PREDICT: int = 384
+    OPENAI_API_KEY: str = ""
+    GEMINI_API_KEY: str = ""
+    LLM_MODEL: str = "gemini-3.8-flash"
+    LLM_BASE_URL: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
+    LLM_API_URL: str = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+    LLM_BACKEND: str = "gemini"  # gemini | openai | ollama
+    LLM_TIMEOUT_SECONDS: float = 60.0
+    LLM_NUM_PREDICT: int = 500
+
+    # Cloudflare R2
+    CLOUDFLARE_R2_ENDPOINT: str = "https://65af18d008d80bd6b17d94abb5976544.r2.cloudflarestorage.com"
+    CLOUDFLARE_R2_BUCKET: str = "images"
+    CLOUDFLARE_R2_TOKEN: str = ""
+    CLOUDFLARE_R2_KEY: str = ""
+    CLOUDFLARE_R2_PUBLIC_URL: str = "https://65af18d008d80bd6b17d94abb5976544.r2.cloudflarestorage.com/images"
 
 
 settings = Settings()

@@ -21,6 +21,24 @@ class QdrantService:
         else:
             self.client = QdrantClient(url=settings.QDRANT_URL)
 
+        if not hasattr(self.client, "search"):
+            def _compat_search(collection_name, query_vector, limit=5, query_filter=None, with_payload=True, with_vectors=False, score_threshold=None, offset=None, **kwargs):
+                query_kwargs = {
+                    "collection_name": collection_name,
+                    "query": query_vector,
+                    "limit": limit,
+                    "query_filter": query_filter,
+                    "with_payload": with_payload,
+                    "with_vectors": with_vectors
+                }
+                if score_threshold is not None:
+                    query_kwargs["score_threshold"] = score_threshold
+                if offset is not None:
+                    query_kwargs["offset"] = offset
+                res = self.client.query_points(**query_kwargs)
+                return getattr(res, "points", res)
+            self.client.search = _compat_search
+
         self._collections_cache = set()
         self._refresh_collections()
 

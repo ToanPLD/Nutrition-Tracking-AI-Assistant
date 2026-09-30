@@ -1,7 +1,9 @@
 import httpx
 import json
 import re
-from typing import Any
+from typing import Any, AsyncGenerator
+
+from openai import AsyncOpenAI
 
 from config.settings import settings
 from core.prompts.agentic_prompts import (
@@ -18,12 +20,20 @@ class LLMService:
         self.model = settings.LLM_MODEL
         self.backend = settings.LLM_BACKEND.lower().strip()
         self.timeout = settings.LLM_TIMEOUT_SECONDS
+        self._openai_client = None
+        if self.backend in ("openai", "gemini"):
+            api_key = settings.GEMINI_API_KEY if self.backend == "gemini" else (settings.OPENAI_API_KEY or settings.GEMINI_API_KEY or "dummy_key")
+            base_url = settings.LLM_BASE_URL if (self.backend == "gemini" or (settings.GEMINI_API_KEY and not settings.OPENAI_API_KEY)) else None
+            if base_url:
+                self._openai_client = AsyncOpenAI(api_key=api_key or "dummy_key", base_url=base_url, timeout=self.timeout)
+            else:
+                self._openai_client = AsyncOpenAI(api_key=api_key or "dummy_key", timeout=self.timeout)
 
     # =========================
     # COMMON CALL
     # =========================
     async def _call_llm(self, prompt, temperature=0.3, num_predict=None):
-        if self.backend == "openai":
+        if self.backend in ("openai", "gemini"):
             return await self._call_openai_compatible(
                 prompt=prompt,
                 temperature=temperature,
@@ -60,37 +70,89 @@ class LLMService:
             return {"error": str(e)}
 
     async def _call_openai_compatible(self, prompt, temperature=0.3, max_tokens=650):
-        payload = {
-            "model": self.model,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": AGENTIC_SYSTEM_PROMPT
-                },
-                {"role": "user", "content": prompt}
-            ],
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-            "stream": False
-        }
+        if not self._openai_client:
+            api_key = settings.GEMINI_API_KEY if self.backend == "gemini" else (settings.OPENAI_API_KEY or settings.GEMINI_API_KEY or "dummy_key")
+            base_url = settings.LLM_BASE_URL if (self.backend == "gemini" or (settings.GEMINI_API_KEY and not settings.OPENAI_API_KEY)) else None
+            if base_url:
+                self._openai_client = AsyncOpenAI(api_key=api_key or "dummy_key", base_url=base_url, timeout=self.timeout)
+            else:
+                self._openai_client = AsyncOpenAI(api_key=api_key or "dummy_key", timeout=self.timeout)
 
-        try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                res = await client.post(self.url, json=payload)
-                res.raise_for_status()
+        models_to_try = [self.model]
+        if self.backend == "gemini" or settings.GEMINI_API_KEY:
+            for alt in ["gemini-flash-latest", "gemini-3.1-flash-lite-preview", "gemini-3.8-flash"]:
+                if alt not in models_to_try:
+                    models_to_try.append(alt)
 
-            data = res.json()
-            text = (
-                data.get("choices", [{}])[0]
-                .get("message", {})
-                .get("content")
-            )
-            if not text:
-                return {"error": "No response", "raw": data}
-            return self._strip_code_fence(text.strip())
+        last_error = None
+        for model in models_to_try:
+            try:
+                response = await self._openai_client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": AGENTIC_SYSTEM_PROMPT},
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    stream=False
+                )
+                text = response.choices[0].message.content or ""
+                if text:
+                    return self._strip_code_fence(text.strip())
+            except Exception as e:
+                last_error = e
+                print(f"[LLMService] Model {model} failed ({e}), trying fallback if available...")
+                continue
 
-        except Exception as e:
-            return {"error": str(e)}
+        return {"error": str(last_error) if last_error else "No response"}
+
+    async def stream_openai_chat(self, prompt, temperature=0.3, max_tokens=650) -> AsyncGenerator[str, None]:
+        if not self._openai_client:
+            api_key = settings.GEMINI_API_KEY if self.backend == "gemini" else (settings.OPENAI_API_KEY or settings.GEMINI_API_KEY or "dummy_key")
+            base_url = settings.LLM_BASE_URL if (self.backend == "gemini" or (settings.GEMINI_API_KEY and not settings.OPENAI_API_KEY)) else None
+            if base_url:
+                self._openai_client = AsyncOpenAI(api_key=api_key or "dummy_key", base_url=base_url, timeout=self.timeout)
+            else:
+                self._openai_client = AsyncOpenAI(api_key=api_key or "dummy_key", timeout=self.timeout)
+
+        models_to_try = [self.model]
+        if self.backend == "gemini" or settings.GEMINI_API_KEY:
+            for alt in ["gemini-flash-latest", "gemini-3.1-flash-lite-preview", "gemini-3.8-flash"]:
+                if alt not in models_to_try:
+                    models_to_try.append(alt)
+
+        streamed_any = False
+        last_error = None
+        for model in models_to_try:
+            try:
+                response = await self._openai_client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": AGENTIC_SYSTEM_PROMPT},
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    stream=True
+                )
+                async for chunk in response:
+                    if chunk.choices and chunk.choices[0].delta.content:
+                        streamed_any = True
+                        yield chunk.choices[0].delta.content
+                if streamed_any:
+                    return
+            except Exception as e:
+                last_error = e
+                if streamed_any:
+                    # Already started yielding chunks
+                    yield f" [Đứt đoạn: {e}]"
+                    return
+                print(f"[LLMService] Stream with model {model} failed ({e}), trying next model...")
+                continue
+
+        if not streamed_any:
+            yield f"[Lỗi kết nối LLM ({self.backend}): {last_error}]"
 
     def _strip_code_fence(self, text: str) -> str:
         text = text.strip()
@@ -558,7 +620,7 @@ Nguon: {json.dumps((citations or [])[:3], ensure_ascii=False, separators=(",", "
         conversation_context=None,
         user_profile_text=None
     ):
-        context_limit = 12 if intent == "meal_planning" else 4
+        context_limit = 8 if intent == "meal_planning" else 4
         compact_context = self._compact_agentic_context(context, limit=context_limit)
         prompt = build_agentic_answer_prompt(
             query=query,
@@ -569,15 +631,16 @@ Nguon: {json.dumps((citations or [])[:3], ensure_ascii=False, separators=(",", "
             user_profile_text=user_profile_text
         )
         if intent == "meal_planning":
-            num_predict = max(settings.LLM_NUM_PREDICT, 1400)
+            num_predict = min(settings.LLM_NUM_PREDICT, 650)
         elif intent == "weight_projection":
-            num_predict = max(settings.LLM_NUM_PREDICT, 500)
+            num_predict = min(settings.LLM_NUM_PREDICT, 350)
         elif intent == "nutrition_qa":
-            num_predict = max(settings.LLM_NUM_PREDICT, 900)
+            num_predict = min(settings.LLM_NUM_PREDICT, 400)
         elif intent == "off_topic":
-            num_predict = max(settings.LLM_NUM_PREDICT, 180)
+            num_predict = 180
         else:
-            num_predict = max(settings.LLM_NUM_PREDICT, 400)
+            num_predict = 350
+
         text = await self._call_llm(
             prompt,
             temperature=0.25,
@@ -585,33 +648,45 @@ Nguon: {json.dumps((citations or [])[:3], ensure_ascii=False, separators=(",", "
         )
         if isinstance(text, dict):
             return None
-        if self._is_low_value_answer(text):
-            retry_text = await self._retry_agentic_short(
-                query=query,
-                intent=intent,
-                compact_context=compact_context,
-                citations=citations
-            )
-            if retry_text and not self._is_low_value_answer(retry_text):
-                return self._strip_internal_labels(retry_text)
-        cleaned = self._strip_internal_labels(text)
-        # If the CJK filter gutted more than half the answer, the model
-        # mostly wrote Chinese. Retry once with a stronger language warning.
-        if isinstance(text, str) and len(cleaned) < max(80, len(text) // 2):
-            retry_prompt = (
-                prompt
-                + "\n\nLƯU Ý CỰC QUAN TRỌNG: lần trước bạn xuất ký tự Trung Quốc — "
-                "không được phép. Viết LẠI 100% bằng tiếng Việt thuần, dùng tên món "
-                "Việt cụ thể từ context."
-            )
-            retry_text = await self._call_llm(
-                retry_prompt, temperature=0.2, num_predict=num_predict
-            )
-            if isinstance(retry_text, str):
-                retry_clean = self._strip_internal_labels(retry_text)
-                if len(retry_clean) > len(cleaned):
-                    return retry_clean
-        return cleaned
+        return self._strip_internal_labels(text)
+
+    async def answer_agentic_stream(
+        self,
+        query,
+        intent,
+        context,
+        citations,
+        conversation_context=None,
+        user_profile_text=None
+    ) -> AsyncGenerator[str, None]:
+        context_limit = 8 if intent == "meal_planning" else 4
+        compact_context = self._compact_agentic_context(context, limit=context_limit)
+        prompt = build_agentic_answer_prompt(
+            query=query,
+            intent=intent,
+            context=compact_context,
+            citations=citations,
+            conversation_context=conversation_context,
+            user_profile_text=user_profile_text
+        )
+        if intent == "meal_planning":
+            max_tokens = min(settings.LLM_NUM_PREDICT, 650)
+        elif intent == "weight_projection":
+            max_tokens = min(settings.LLM_NUM_PREDICT, 350)
+        elif intent == "nutrition_qa":
+            max_tokens = min(settings.LLM_NUM_PREDICT, 400)
+        elif intent == "off_topic":
+            max_tokens = 180
+        else:
+            max_tokens = 350
+
+        if self.backend in ("openai", "gemini"):
+            async for chunk in self.stream_openai_chat(prompt, temperature=0.25, max_tokens=max_tokens):
+                yield chunk
+        else:
+            result = await self._call_llm(prompt, temperature=0.25, num_predict=max_tokens)
+            if isinstance(result, str):
+                yield result
 
     # =========================
     # TEXT → QA

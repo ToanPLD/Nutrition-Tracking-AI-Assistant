@@ -34,6 +34,7 @@ logs/
 data/storage/
 data/cache/
 data/tmp/
+cache/
 
 # vector DB local (nếu dùng local)
 qdrant_storage/

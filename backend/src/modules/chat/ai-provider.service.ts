@@ -64,9 +64,74 @@ export class AiProviderService {
     if (!res.ok) return null;
     const data = (await res.json()) as any;
     return {
-      text: data.response || data.text || data.message || '',
-      thinkingSteps: data.thinking_steps || ['Queried vector knowledge base', 'Formulated personalized meal advice'],
+      text: data.response || data.text || data.answer || data.message || '',
+      thinkingSteps: data.thinking_steps || (data.trace ? data.trace.map((t: any) => t.title || t.action || '') : ['Queried vector knowledge base', 'Formulated personalized meal advice']),
       foodInsight: data.food_insight || data.foodInsight,
+    };
+  }
+
+  async *streamCalAiAgent(
+    query: string,
+    history: any[] = [],
+    userProfile?: any
+  ): AsyncGenerator<string, { fullText: string; thinkingSteps?: string[]; foodInsight?: any }, unknown> {
+    const res = await fetch(`${ENV.CAL_AI_BASE_URL}/api/agent/query/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        query,
+        history,
+        user_profile: userProfile,
+      }),
+      signal: AbortSignal.timeout(ENV.CAL_AI_QUERY_TIMEOUT_MS),
+    });
+
+    if (!res.ok || !res.body) {
+      throw new Error(`CalAI stream request failed with status ${res.status}`);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let fullText = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || !trimmed.startsWith('data:')) continue;
+        const dataStr = trimmed.slice(5).trim();
+        if (dataStr === '[DONE]') {
+          return {
+            fullText,
+            thinkingSteps: ['Vector Search & FlashRank', 'GPT-4o-mini generation'],
+          };
+        }
+        try {
+          const parsed = JSON.parse(dataStr);
+          if (parsed.chunk) {
+            fullText += parsed.chunk;
+            yield parsed.chunk;
+          } else if (parsed.error) {
+            throw new Error(parsed.error);
+          }
+        } catch (e: any) {
+          if (e.message && !e.message.includes('JSON')) {
+            throw e;
+          }
+        }
+      }
+    }
+
+    return {
+      fullText,
+      thinkingSteps: ['Vector Search & FlashRank', 'GPT-4o-mini generation'],
     };
   }
 

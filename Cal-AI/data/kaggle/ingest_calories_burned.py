@@ -15,7 +15,7 @@ def run():
     print("🚀 ingest_calories_burned (768 model)")
 
     dataset_path = kagglehub.dataset_download(
-        "jockeroika/calories-burned"
+        "aadhavvignesh/calories-burned-during-exercise-and-activities"
     )
 
     files = find_all_csv_files(dataset_path)

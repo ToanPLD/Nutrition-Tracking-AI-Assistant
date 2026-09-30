@@ -36,3 +36,9 @@ local-db.json
 .claude/
 openspec/
 
+# Uploads and temporary files
+uploads/
+**/uploads/
+cache/
+**/cache/
+

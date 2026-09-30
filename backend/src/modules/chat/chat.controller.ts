@@ -50,3 +50,39 @@ export const sendChatMessage = async (req: Request, res: Response, next: NextFun
     next(error);
   }
 };
+
+export const streamChatMessage = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders?.();
+
+    const result = await chatService.sendMessageStream(
+      req.user!.accountId,
+      req.body,
+      (chunk: string) => {
+        res.write(`data: ${JSON.stringify({ chunk })}\n\n`);
+      }
+    );
+
+    res.write(
+      `data: ${JSON.stringify({
+        done: true,
+        sessionId: result.sessionId,
+        userMessage: result.userMessage,
+        aiMessage: result.aiMessage,
+      })}\n\n`
+    );
+    res.write('data: [DONE]\n\n');
+    res.end();
+  } catch (error) {
+    if (!res.headersSent) {
+      next(error);
+    } else {
+      res.write(`data: ${JSON.stringify({ error: (error as any)?.message || 'Stream error' })}\n\n`);
+      res.write('data: [DONE]\n\n');
+      res.end();
+    }
+  }
+};

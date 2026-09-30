@@ -4,6 +4,7 @@ import {
   getChatMessages,
   getChatSessions,
   sendChatMessage,
+  streamChatMessage,
   truncateMessagesAfter,
 } from './chat.controller';
 
@@ -14,5 +15,6 @@ chatRouter.get('/sessions/:sessionId/messages', getChatMessages);
 chatRouter.delete('/sessions/:sessionId', deleteChatSession);
 chatRouter.delete('/sessions/:sessionId/messages/after/:messageId', truncateMessagesAfter);
 chatRouter.post('/message', sendChatMessage);
+chatRouter.post('/message/stream', streamChatMessage);
 
 export default chatRouter;

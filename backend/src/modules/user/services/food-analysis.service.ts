@@ -4,6 +4,7 @@ import { ENV } from '../../../config/env';
 import { profileService } from './profile.service';
 import { mealService } from './meal.service';
 import { ConfirmAnalysisDto, FoodAnalysisDto } from '../user.types';
+import { r2StorageService } from '../../../services/r2-storage.service';
 
 export class FoodAnalysisService {
   async getHistory(accountId: number) {
@@ -66,10 +67,18 @@ export class FoodAnalysisService {
   async analyzeImage(accountId: number, data: FoodAnalysisDto) {
     const userId = await profileService.getUserId(accountId);
 
+    // Upload image to Cloudflare R2 if data URL or upload
+    let persistentImageUrl = data.imageUrl;
+    try {
+      persistentImageUrl = await r2StorageService.uploadImage(data.imageUrl);
+    } catch (r2Err) {
+      console.warn('[FoodAnalysis] R2 upload notice:', r2Err);
+    }
+
     // Save uploaded image record
     const imgResult = await dbExecute(
       'INSERT INTO foodimages (user_id, image_url, source) VALUES (?, ?, ?)',
-      [userId, data.imageUrl, data.source || 'upload']
+      [userId, persistentImageUrl, data.source || 'upload']
     );
     const imageId = imgResult.insertId;
 

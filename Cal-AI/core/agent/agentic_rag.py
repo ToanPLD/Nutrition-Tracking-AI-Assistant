@@ -7,11 +7,13 @@ from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 
 from config.settings import settings
+from core.agent.entity_extractor import EntityExtractor
 from core.embedding.text_embedding_service import TextEmbeddingService
 from core.services.cache.redis_cache import RedisCache
 from core.services.llm.llm_service import LLMService
 from core.services.rag.recipe_image_rag_service import RecipeImageRAGService
 from core.services.retrieval.qdrant_service import QdrantService
+from core.services.retrieval.rerank_service import FlashRankService
 
 
 # Shared executor: per-collection Qdrant searches are I/O bound HTTP calls and
@@ -486,6 +488,24 @@ class AgenticResponseGenerator:
 
         return answer or self._model_unavailable_answer()
 
+    async def generate_stream(self, query, intent, context, citations, conversation_context=None, user_profile_text=None):
+        if not context and intent not in ("weight_projection", "off_topic"):
+            yield self._no_context_answer(query)
+            return
+
+        try:
+            async for chunk in self.llm.answer_agentic_stream(
+                query=query,
+                intent=intent,
+                context=context,
+                citations=citations,
+                conversation_context=conversation_context,
+                user_profile_text=user_profile_text
+            ):
+                yield chunk
+        except Exception as exc:
+            yield f"[Lỗi: {exc}]"
+
 
 class GenericRAGAgent:
     FOOD_SYNONYMS = {
@@ -588,6 +608,16 @@ class GenericRAGAgent:
         keywords = set(self._query_keywords(query))
         topics = matched_topics(query)
         normalized_query = self._normalize_query(query)
+        
+        # When querying Vietnamese food, focus specifically on vn_food and key nutrition collections
+        if self._is_vn_food_query(normalized_query) and self.VN_FOOD_COLLECTION in existing:
+            vn_focused = [
+                self.VN_FOOD_COLLECTION,
+                "food_nutrition_vectors_768",
+                "food_common_vectors_768"
+            ]
+            return [c for c in vn_focused if c in existing]
+
         vn_food_first = (
             [self.VN_FOOD_COLLECTION]
             if self._is_vn_food_query(normalized_query)
@@ -909,20 +939,19 @@ class GenericRAGAgent:
         return max(matches, key=lambda m: (m.count(" "), len(m)))
 
     def _search_hits(self, query, top_k, collections=None, per_collection=None):
+        isolated_entity = EntityExtractor.extract_food_entity(query)
         expanded_query = self._expand_query(query)
         keywords = self._query_keywords(query)
         normalized_query = self._normalize_query(query)
         proper_noun = self._proper_noun_phrase(query)
 
-        # When the user names a specific dish (Title-Cased English phrase),
-        # embed THAT instead of the full sentence — Vietnamese instruction
-        # prefixes otherwise pull the embedding away from the exact recipe.
-        embed_target = proper_noun if proper_noun else expanded_query
+        # Priority: proper noun phrase > isolated food entity > expanded query
+        embed_target = proper_noun or (isolated_entity if isolated_entity and len(isolated_entity) >= 3 else None) or expanded_query
         vector = self.text_embed.embed(embed_target)
         if vector is None:
             return []
 
-        collections = collections or self._text_collections()
+        collections = collections or self._focused_nutrition_collections(query)
         # Floor of 6 so a specific-dish query has enough candidates per
         # collection for the title-match rerank to surface the exact match,
         # rather than competing with same-keyword neighbors at top_k=3.
@@ -981,24 +1010,20 @@ class GenericRAGAgent:
                         seen_ids.add(key)
                         hits.append(hit)
 
+        if not hits:
+            return []
+
+        # Neural Cross-Encoder Rerank with FlashRank
+        reranker = FlashRankService.get_instance()
+        reranked = reranker.rerank_hits(query=query, hits=hits, top_k=top_k)
+        if reranked:
+            return reranked
+
+        # Fallback to score sort if reranker unavailable
         hits.sort(
-            key=lambda hit: self._rerank_score(hit, keywords, normalized_query),
+            key=lambda hit: getattr(hit, "score", 0.0) or 0.0,
             reverse=True
         )
-        if not hits:
-            return hits
-        # Drop low-relevance tails: anything below 60% of the top reranked
-        # score is likely noise and bleeds into the table ("Đầu heo" sneaking
-        # into a phở question). Keep at least 1 hit so we always answer.
-        top_score = self._rerank_score(hits[0], keywords, normalized_query)
-        if top_score > 0:
-            min_score = max(top_score * 0.6, 0.25)
-            filtered = [
-                hit for hit in hits
-                if self._rerank_score(hit, keywords, normalized_query) >= min_score
-            ]
-            if filtered:
-                hits = filtered
         return hits[:top_k]
 
     def run(self, query, top_k, trace, collections=None, per_collection=None):
@@ -1549,25 +1574,11 @@ class AgenticRAG:
         if not conversation_context:
             return query
 
-        if is_follow_up is None:
-            normalized = self.router._normalize(query)
-            is_follow_up = len(normalized) <= 28 or self.router._has_phrase(normalized, [
-                "mon nay", "mon do", "cai nay", "cai do", "no", "nay",
-                "tiep", "tinh tiep", "vay con", "so sanh voi", "them",
-                "bot", "doi sang", "nhu tren", "nhu vay", "vay trong",
-                "luong dinh duong", "can nang hien tai", "tang bao nhieu",
-                "giam bao nhieu", "the thi", "this", "that", "it"
-            ])
+        resolved_entity = EntityExtractor.extract_food_entity(query, conversation_context=conversation_context)
+        if resolved_entity and resolved_entity.lower() not in query.lower():
+            return f"{query} (Món tham chiếu: {resolved_entity})"
 
-        if not is_follow_up:
-            return query
-
-        compact_context = str(conversation_context)[-1600:]
-        return (
-            "Ngữ cảnh hội thoại gần đây:\n"
-            f"{compact_context}\n\n"
-            f"Câu hỏi hiện tại: {query}"
-        )
+        return query
 
     def _cache_key(
         self,
@@ -2336,3 +2347,77 @@ class AgenticRAG:
         if use_cache:
             self._cache_set(cache_key, response)
         return response
+
+    async def run_stream(
+        self,
+        query,
+        top_k=6,
+        intent=None,
+        session_id=None,
+        conversation_context=None,
+        is_follow_up=None,
+        user_profile=None
+    ):
+        """Streaming execution of Agentic RAG pipeline: retrieves context and streams tokens."""
+        routed_intent = self.router.classify(query, forced_intent=intent)
+        profile_text = self._format_user_profile(user_profile)
+        trace = AgenticTrace()
+
+        if conversation_context and self._is_pure_affirmation(query):
+            anchor = self._last_assistant_question(conversation_context)
+            if anchor:
+                query = f"{anchor.rstrip('?').strip()} - user xác nhận đồng ý ({query})"
+
+        if self._is_vague_followup(query, is_follow_up, conversation_context):
+            recent_topic = self._extract_recent_topic(conversation_context)
+            topic_hint = recent_topic[:160] if recent_topic else "chủ đề vừa rồi"
+            yield (
+                f"Bạn muốn mình gợi ý cụ thể về điều gì liên quan đến \"{topic_hint}\"?\n\n"
+                "Ví dụ:\n"
+                "- Các thực phẩm tương tự (dinh dưỡng/calorie gần giống)\n"
+                "- Cách kết hợp vào bữa ăn (sáng/trưa/tối)\n"
+                "- Khẩu phần phù hợp với mục tiêu (giảm cân, tăng cơ...)\n\n"
+                "Bạn cho mình biết hướng nào để mình tra số liệu chính xác nhé."
+            )
+            return
+
+        retrieval_query = self._retrieval_query(
+            query,
+            conversation_context=conversation_context,
+            is_follow_up=is_follow_up
+        )
+
+        if routed_intent == "image_retrieval":
+            results = self.recipe_agent.image_retrieval(retrieval_query, top_k, trace)
+        elif routed_intent == "recipe_reasoning":
+            results = self.recipe_agent.recipe_reasoning(retrieval_query, top_k, trace)
+        elif routed_intent == "ingredient_comparison":
+            results = self._generic_agent().ingredient_comparison(retrieval_query, top_k, trace)
+        elif routed_intent == "multi_hop":
+            results = self.recipe_agent.multi_hop(retrieval_query, top_k, trace)
+        elif routed_intent in ("weight_projection", "off_topic"):
+            results = []
+        else:
+            generic_agent = self._generic_agent()
+            results = generic_agent.run(
+                retrieval_query,
+                top_k,
+                trace,
+                collections=generic_agent._focused_nutrition_collections(retrieval_query)
+            )
+
+        context = self._context_from_results(results)
+        citations = CitationBuilder.dedupe([
+            result.get("citation") or CitationBuilder.from_payload(result.get("payload"))
+            for result in results
+        ])
+
+        async for chunk in self.response_generator.generate_stream(
+            query=query,
+            intent=routed_intent,
+            context=context,
+            citations=citations,
+            conversation_context=conversation_context,
+            user_profile_text=profile_text
+        ):
+            yield chunk
