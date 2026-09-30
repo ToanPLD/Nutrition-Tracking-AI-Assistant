@@ -11,12 +11,29 @@ A full-stack calorie tracking application with a hybrid AI chatbot combining Qdr
 
 ## Prerequisites
 
-- Node.js 18+
-- MySQL 8.0+
-- [Ollama](https://ollama.com/) installed and running
-- [CalAI Python backend](Cal_ai/) (optional, for food search)
+- Node.js 18+ & pnpm
+- *(Tùy chọn nâng cao)*: MySQL 8.0+, [Ollama](https://ollama.com/), Python (FastAPI).
 
-## Setup
+> [!TIP]
+> **Chế độ Standalone (Zero-Config)**: Bạn **KHÔNG BẮT BUỘC** phải cài MySQL, Ollama hay Python để chạy thử nghiệm! Hệ thống đã tích hợp sẵn **Embedded Local Storage** tự động lưu vào `backend/data/local-db.json` với hơn 180+ món ăn Việt Nam thực tế và trợ lý AI dinh dưỡng tích hợp sẵn.
+
+## Quick Start (Chạy ngay lập tức)
+
+Chỉ cần chạy lệnh sau từ thư mục gốc:
+
+```bash
+pnpm install
+pnpm dev
+```
+
+- Mở trình duyệt tại: **http://localhost:3001**
+- Tài khoản mẫu có sẵn:
+  - **Admin**: `admin@calai.local` / Mật khẩu: `Admin123!`
+  - **User**: `user@calai.local` / Mật khẩu: `User123!`
+
+---
+
+## Cài đặt đầy đủ (Nâng cao với MySQL / Ollama)
 
 ### 1. Database
 
@@ -36,8 +53,8 @@ mysql -u root -p calai < backend/schema.sql
 cd backend
 cp .env.example .env
 # Edit .env with your MySQL credentials
-npm install
-npm run dev
+pnpm install
+pnpm dev
 ```
 
 ### 3. Ollama (required)
@@ -65,11 +82,27 @@ The chatbot uses this automatically when available. If CalAI is unavailable or r
 
 ```bash
 cd frontend
-npm install
-npm run dev
+pnpm install
+pnpm dev
 ```
 
 Open http://localhost:3001
+
+### 6. Quick Start with pnpm Workspace (Root)
+
+From the root directory, you can install all dependencies and run both servers simultaneously:
+
+```bash
+# Install dependencies for all projects
+pnpm install
+
+# Run both backend and frontend concurrently
+pnpm dev
+
+# Or run separately from root:
+pnpm dev:backend
+pnpm dev:frontend
+```
 
 ## Project Structure
 

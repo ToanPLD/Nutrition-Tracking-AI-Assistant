@@ -1,42 +1,52 @@
 import cors from 'cors';
 import express from 'express';
-import authRouter from './auth/routes/auth.routes';
-import { requireAuth } from './shared/middleware/auth.middleware';
-import { requireRole } from './shared/middleware/role.middleware';
-import userRouter from './user/routes/user.routes';
-import adminRouter from './admin/routes/admin.routes';
-import chatRouter from './chat/routes/chat.routes';
+import { corsOptions } from './config/cors';
+import { isDatabaseReady } from './database/connection';
+import { requireAuth } from './middlewares/auth.middleware';
+import { requireRole } from './middlewares/role.middleware';
+import { errorHandler } from './middlewares/error.middleware';
+import { notFoundHandler } from './middlewares/notFound.middleware';
+
+// Route modules
+import authRouter from './modules/auth/auth.routes';
+import userRouter from './modules/user/user.routes';
+import adminRouter from './modules/admin/admin.routes';
+import chatRouter from './modules/chat/chat.routes';
 
 const app = express();
 
-const corsOptions = {
-  origin: [
-    'http://localhost:3001',
-    'http://localhost:3000',
-    'http://localhost:3002',
-    'http://localhost:3003',
-    'http://localhost:3004',
-    'http://localhost:3005',
-    /https:\/\/.*\.ngrok(-free)?\.app$/,
-    /https:\/\/.*\.ngrok\.io$/,
-  ],
-  credentials: true
-};
-
+// Global Middlewares
 app.use(cors(corsOptions));
-app.use(express.json({ limit: '8mb' }));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
+// Health Check Endpoints
 app.get('/', (req, res) => {
-    res.status(200).json({ message: 'CalAI Backend is running' });
+  res.status(200).json({
+    status: 'ok',
+    message: 'CalAI Backend API is running',
+    database: isDatabaseReady() ? 'mysql-connected' : 'embedded-local',
+    timestamp: new Date().toISOString(),
+  });
 });
 
 app.get('/api/health', (req, res) => {
-    res.status(200).json({ message: 'Backend is running' });
+  res.status(200).json({
+    status: 'ok',
+    database: isDatabaseReady() ? 'mysql-connected' : 'embedded-local',
+    uptime: Math.floor(process.uptime()),
+    timestamp: new Date().toISOString(),
+  });
 });
 
+// Mount Module Routes
 app.use('/api/auth', authRouter);
-app.use('/api/users', requireAuth, requireRole('user'), userRouter);
+app.use('/api/users', requireAuth, requireRole('user', 'admin'), userRouter);
 app.use('/api/admin', requireAuth, requireRole('admin'), adminRouter);
-app.use('/api/chat', requireAuth, requireRole('user'), chatRouter);
+app.use('/api/chat', requireAuth, requireRole('user', 'admin'), chatRouter);
+
+// 404 & Centralized Error Handlers
+app.use(notFoundHandler);
+app.use(errorHandler);
 
 export default app;

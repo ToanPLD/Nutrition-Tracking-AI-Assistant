@@ -24,3 +24,15 @@ ngrok.yml
 __pycache__/
 *.py[cod]
 .cache/
+
+# Local embedded database & backups
+local-db.json
+**/local-db.json
+*.backup/
+*.bak
+
+# AI agent workspace settings
+.agents/
+.claude/
+openspec/
+
