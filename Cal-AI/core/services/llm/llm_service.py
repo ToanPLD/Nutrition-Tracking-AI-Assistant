@@ -21,19 +21,35 @@ class LLMService:
         self.backend = settings.LLM_BACKEND.lower().strip()
         self.timeout = settings.LLM_TIMEOUT_SECONDS
         self._openai_client = None
-        if self.backend in ("openai", "gemini"):
-            api_key = settings.GEMINI_API_KEY if self.backend == "gemini" else (settings.OPENAI_API_KEY or settings.GEMINI_API_KEY or "dummy_key")
-            base_url = settings.LLM_BASE_URL if (self.backend == "gemini" or (settings.GEMINI_API_KEY and not settings.OPENAI_API_KEY)) else None
+        self._gemini_client = None
+        if self.backend in ("orcarouter", "vllm", "openai", "gemini"):
+            self._openai_client = self._create_client(self.backend)
+        if getattr(settings, "GEMINI_API_KEY", None):
+            self._gemini_client = self._create_client("gemini")
+
+    def _create_client(self, backend: str = "orcarouter"):
+        target_backend = (backend or self.backend).lower().strip()
+        if target_backend in ("orcarouter", "vllm"):
+            api_key = getattr(settings, "LLM_API_KEY", "") or getattr(settings, "OPENAI_API_KEY", "") or "not-needed"
+            base_url = getattr(settings, "LLM_BASE_URL", "") or "http://localhost:8000/v1"
+            timeout = httpx.Timeout(self.timeout, connect=2.0)
+            return AsyncOpenAI(api_key=api_key or "not-needed", base_url=base_url, timeout=timeout)
+        elif target_backend == "gemini":
+            api_key = getattr(settings, "GEMINI_API_KEY", "") or getattr(settings, "OPENAI_API_KEY", "") or "dummy_key"
+            base_url = getattr(settings, "GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai/")
+            return AsyncOpenAI(api_key=api_key or "dummy_key", base_url=base_url, timeout=self.timeout)
+        else:  # openai
+            api_key = getattr(settings, "OPENAI_API_KEY", "") or "dummy_key"
+            base_url = getattr(settings, "LLM_BASE_URL", None)
             if base_url:
-                self._openai_client = AsyncOpenAI(api_key=api_key or "dummy_key", base_url=base_url, timeout=self.timeout)
-            else:
-                self._openai_client = AsyncOpenAI(api_key=api_key or "dummy_key", timeout=self.timeout)
+                return AsyncOpenAI(api_key=api_key or "dummy_key", base_url=base_url, timeout=self.timeout)
+            return AsyncOpenAI(api_key=api_key or "dummy_key", timeout=self.timeout)
 
     # =========================
     # COMMON CALL
     # =========================
     async def _call_llm(self, prompt, temperature=0.3, num_predict=None):
-        if self.backend in ("openai", "gemini"):
+        if self.backend in ("orcarouter", "vllm", "openai", "gemini"):
             return await self._call_openai_compatible(
                 prompt=prompt,
                 temperature=temperature,
@@ -71,88 +87,126 @@ class LLMService:
 
     async def _call_openai_compatible(self, prompt, temperature=0.3, max_tokens=650):
         if not self._openai_client:
-            api_key = settings.GEMINI_API_KEY if self.backend == "gemini" else (settings.OPENAI_API_KEY or settings.GEMINI_API_KEY or "dummy_key")
-            base_url = settings.LLM_BASE_URL if (self.backend == "gemini" or (settings.GEMINI_API_KEY and not settings.OPENAI_API_KEY)) else None
-            if base_url:
-                self._openai_client = AsyncOpenAI(api_key=api_key or "dummy_key", base_url=base_url, timeout=self.timeout)
-            else:
-                self._openai_client = AsyncOpenAI(api_key=api_key or "dummy_key", timeout=self.timeout)
+            self._openai_client = self._create_client(self.backend)
 
-        models_to_try = [self.model]
-        if self.backend == "gemini" or settings.GEMINI_API_KEY:
-            for alt in ["gemini-flash-latest", "gemini-3.1-flash-lite-preview", "gemini-3.8-flash"]:
-                if alt not in models_to_try:
-                    models_to_try.append(alt)
+        # 1. Primary execution on configured backend (orcarouter / vllm / openai / gemini)
+        try:
+            response = await self._openai_client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": AGENTIC_SYSTEM_PROMPT},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=temperature,
+                max_tokens=max_tokens,
+                stream=False
+            )
+            text = response.choices[0].message.content or ""
+            if text:
+                return self._strip_code_fence(text.strip())
+        except Exception as e:
+            print(f"[LLMService] Primary model {self.model} via {self.backend} failed ({e})")
+            # If backend is orcarouter or vllm and server is offline, fallback to Gemini
+            if self.backend in ("orcarouter", "vllm") and (self._gemini_client or getattr(settings, "GEMINI_API_KEY", None)):
+                print(f"[LLMService] Routing request through fallback Gemini API...")
+                client = self._gemini_client or self._create_client("gemini")
+                for alt_model in ["gemini-3.8-flash", "gemini-flash-latest", "gemini-3.1-flash-lite-preview"]:
+                    try:
+                        fb_resp = await client.chat.completions.create(
+                            model=alt_model,
+                            messages=[
+                                {"role": "system", "content": AGENTIC_SYSTEM_PROMPT},
+                                {"role": "user", "content": prompt}
+                            ],
+                            temperature=temperature,
+                            max_tokens=max_tokens,
+                            stream=False
+                        )
+                        text = fb_resp.choices[0].message.content or ""
+                        if text:
+                            return self._strip_code_fence(text.strip())
+                    except Exception as fb_err:
+                        print(f"[LLMService] Gemini fallback model {alt_model} failed ({fb_err})")
+                        continue
 
-        last_error = None
-        for model in models_to_try:
-            try:
-                response = await self._openai_client.chat.completions.create(
-                    model=model,
-                    messages=[
-                        {"role": "system", "content": AGENTIC_SYSTEM_PROMPT},
-                        {"role": "user", "content": prompt}
-                    ],
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    stream=False
-                )
-                text = response.choices[0].message.content or ""
-                if text:
-                    return self._strip_code_fence(text.strip())
-            except Exception as e:
-                last_error = e
-                print(f"[LLMService] Model {model} failed ({e}), trying fallback if available...")
-                continue
+            if self.backend == "gemini":
+                # Try other gemini models
+                for alt_model in ["gemini-flash-latest", "gemini-3.1-flash-lite-preview"]:
+                    try:
+                        fb_resp = await self._openai_client.chat.completions.create(
+                            model=alt_model,
+                            messages=[
+                                {"role": "system", "content": AGENTIC_SYSTEM_PROMPT},
+                                {"role": "user", "content": prompt}
+                            ],
+                            temperature=temperature,
+                            max_tokens=max_tokens,
+                            stream=False
+                        )
+                        text = fb_resp.choices[0].message.content or ""
+                        if text:
+                            return self._strip_code_fence(text.strip())
+                    except Exception:
+                        continue
 
-        return {"error": str(last_error) if last_error else "No response"}
+            return {"error": str(e)}
 
     async def stream_openai_chat(self, prompt, temperature=0.3, max_tokens=650) -> AsyncGenerator[str, None]:
         if not self._openai_client:
-            api_key = settings.GEMINI_API_KEY if self.backend == "gemini" else (settings.OPENAI_API_KEY or settings.GEMINI_API_KEY or "dummy_key")
-            base_url = settings.LLM_BASE_URL if (self.backend == "gemini" or (settings.GEMINI_API_KEY and not settings.OPENAI_API_KEY)) else None
-            if base_url:
-                self._openai_client = AsyncOpenAI(api_key=api_key or "dummy_key", base_url=base_url, timeout=self.timeout)
-            else:
-                self._openai_client = AsyncOpenAI(api_key=api_key or "dummy_key", timeout=self.timeout)
-
-        models_to_try = [self.model]
-        if self.backend == "gemini" or settings.GEMINI_API_KEY:
-            for alt in ["gemini-flash-latest", "gemini-3.1-flash-lite-preview", "gemini-3.8-flash"]:
-                if alt not in models_to_try:
-                    models_to_try.append(alt)
+            self._openai_client = self._create_client(self.backend)
 
         streamed_any = False
-        last_error = None
-        for model in models_to_try:
-            try:
-                response = await self._openai_client.chat.completions.create(
-                    model=model,
-                    messages=[
-                        {"role": "system", "content": AGENTIC_SYSTEM_PROMPT},
-                        {"role": "user", "content": prompt}
-                    ],
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    stream=True
-                )
-                async for chunk in response:
-                    if chunk.choices and chunk.choices[0].delta.content:
-                        streamed_any = True
-                        yield chunk.choices[0].delta.content
-                if streamed_any:
-                    return
-            except Exception as e:
-                last_error = e
-                if streamed_any:
-                    # Already started yielding chunks
-                    yield f" [Đứt đoạn: {e}]"
-                    return
-                print(f"[LLMService] Stream with model {model} failed ({e}), trying next model...")
-                continue
+        # 1. Primary stream attempt
+        try:
+            response = await self._openai_client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": AGENTIC_SYSTEM_PROMPT},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=temperature,
+                max_tokens=max_tokens,
+                stream=True
+            )
+            async for chunk in response:
+                if chunk.choices and chunk.choices[0].delta.content:
+                    streamed_any = True
+                    yield chunk.choices[0].delta.content
+            if streamed_any:
+                return
+        except Exception as e:
+            if streamed_any:
+                yield f" [Đứt đoạn: {e}]"
+                return
+            print(f"[LLMService] Primary stream with {self.model} failed ({e}), checking fallback...")
+
+        # 2. Fallback stream if local orcarouter / vllm is offline
+        if not streamed_any and self.backend in ("orcarouter", "vllm") and (self._gemini_client or getattr(settings, "GEMINI_API_KEY", None)):
+            client = self._gemini_client or self._create_client("gemini")
+            for alt_model in ["gemini-3.8-flash", "gemini-flash-latest", "gemini-3.1-flash-lite-preview"]:
+                try:
+                    fb_resp = await client.chat.completions.create(
+                        model=alt_model,
+                        messages=[
+                            {"role": "system", "content": AGENTIC_SYSTEM_PROMPT},
+                            {"role": "user", "content": prompt}
+                        ],
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        stream=True
+                    )
+                    async for chunk in fb_resp:
+                        if chunk.choices and chunk.choices[0].delta.content:
+                            streamed_any = True
+                            yield chunk.choices[0].delta.content
+                    if streamed_any:
+                        return
+                except Exception as fb_err:
+                    print(f"[LLMService] Gemini fallback stream {alt_model} failed ({fb_err})")
+                    continue
 
         if not streamed_any:
-            yield f"[Lỗi kết nối LLM ({self.backend}): {last_error}]"
+            yield f"[Lỗi kết nối LLM ({self.backend}): Không thể kết nối tới mô hình {self.model}]"
 
     def _strip_code_fence(self, text: str) -> str:
         text = text.strip()
@@ -680,7 +734,7 @@ Nguon: {json.dumps((citations or [])[:3], ensure_ascii=False, separators=(",", "
         else:
             max_tokens = 350
 
-        if self.backend in ("openai", "gemini"):
+        if self.backend in ("orcarouter", "vllm", "openai", "gemini"):
             async for chunk in self.stream_openai_chat(prompt, temperature=0.25, max_tokens=max_tokens):
                 yield chunk
         else:

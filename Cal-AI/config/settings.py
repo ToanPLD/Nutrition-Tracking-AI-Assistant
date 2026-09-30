@@ -141,10 +141,12 @@ class Settings(BaseSettings):
 
     OPENAI_API_KEY: str = ""
     GEMINI_API_KEY: str = ""
-    LLM_MODEL: str = "gemini-3.8-flash"
-    LLM_BASE_URL: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
-    LLM_API_URL: str = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
-    LLM_BACKEND: str = "gemini"  # gemini | openai | ollama
+    LLM_API_KEY: str = ""
+    HF_TOKEN: str = ""
+    LLM_MODEL: str = "orcarouter/OrcaSAQ-2-27B"
+    LLM_BASE_URL: str = "http://localhost:8000/v1"
+    LLM_API_URL: str = "http://localhost:8000/v1/chat/completions"
+    LLM_BACKEND: str = "orcarouter"  # orcarouter | vllm | openai | gemini | ollama
     LLM_TIMEOUT_SECONDS: float = 60.0
     LLM_NUM_PREDICT: int = 500
 

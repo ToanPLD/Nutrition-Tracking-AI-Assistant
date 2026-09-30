@@ -39,6 +39,9 @@ export const ENV = {
   GEMINI_API_KEY: process.env.GEMINI_API_KEY || '',
   GEMINI_MODEL: process.env.GEMINI_MODEL || 'gemini-3.8-flash',
 
+  // OrcaSAQ-2-27B / Agent LLM
+  LLM_MODEL: process.env.LLM_MODEL || 'orcarouter/OrcaSAQ-2-27B',
+
   // Cloudflare R2 Image Storage
   CLOUDFLARE_R2_ENDPOINT: process.env.CLOUDFLARE_R2_ENDPOINT || 'https://65af18d008d80bd6b17d94abb5976544.r2.cloudflarestorage.com',
   CLOUDFLARE_R2_BUCKET: process.env.CLOUDFLARE_R2_BUCKET || 'images',
