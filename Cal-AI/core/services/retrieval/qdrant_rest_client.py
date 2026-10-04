@@ -155,6 +155,48 @@ class QdrantRestClient:
         except Exception:
             return []
 
+    def scroll(
+        self,
+        collection_name: str,
+        scroll_filter: Any = None,
+        limit: int = 5,
+        with_payload: bool = True,
+        with_vectors: bool = False,
+        **kwargs
+    ) -> Tuple[List[ScoredPoint], Optional[Any]]:
+        body: Dict[str, Any] = {
+            "limit": int(limit),
+            "with_payload": with_payload,
+            "with_vector": with_vectors
+        }
+        if scroll_filter:
+            if hasattr(scroll_filter, "to_dict"):
+                body["filter"] = scroll_filter.to_dict()
+            elif isinstance(scroll_filter, dict):
+                body["filter"] = scroll_filter
+
+        try:
+            with self._get_client() as client:
+                res = client.post(f"/collections/{collection_name}/points/scroll", json=body)
+                if res.status_code != 200:
+                    return [], None
+                data = res.json().get("result", {})
+                points_raw = data.get("points", []) if isinstance(data, dict) else []
+                next_offset = data.get("next_page_offset") if isinstance(data, dict) else None
+                points = []
+                for p in points_raw:
+                    points.append(
+                        ScoredPoint(
+                            id=p.get("id"),
+                            score=1.0,
+                            payload=p.get("payload", {}) or {},
+                            vector=p.get("vector")
+                        )
+                    )
+                return points, next_offset
+        except Exception:
+            return [], None
+
     def get_collections(self):
         try:
             with self._get_client() as client:
