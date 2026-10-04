@@ -1,0 +1,268 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// =====================================================
+// 1. Phân quyền & Tài khoản (Auth & Accounts)
+// =====================================================
+enum Role {
+  USER
+  ADMIN
+}
+
+enum AccountStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+model Account {
+  id            Int             @id @default(autoincrement())
+  email         String          @unique
+  passwordHash  String?         @map("password_hash")
+  emailVerified Boolean         @default(false) @map("email_verified")
+  status        AccountStatus   @default(ACTIVE)
+  role          Role            @default(USER)
+  user          User?
+  auditLogs     AdminAuditLog[]
+  createdAt     DateTime        @default(now()) @map("created_at")
+  updatedAt     DateTime        @updatedAt @map("updated_at")
+
+  @@map("accounts")
+}
+
+model AdminAuditLog {
+  id             Int      @id @default(autoincrement())
+  adminAccountId Int?     @map("admin_account_id")
+  adminAccount   Account? @relation(fields: [adminAccountId], references: [id], onDelete: SetNull)
+  action         String
+  targetType     String   @map("target_type")
+  targetId       Int?     @map("target_id")
+  detail         String?
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@index([adminAccountId])
+  @@map("admin_audit_logs")
+}
+
+// =====================================================
+// 2. Thông tin người dùng & Mục tiêu (Users & Goals)
+// =====================================================
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+}
+
+enum GoalType {
+  WEIGHT_LOSS
+  MUSCLE_GAIN
+  MAINTENANCE
+  GENERAL
+}
+
+enum PreferenceType {
+  FAVORITE
+  AVOIDED
+  DISLIKED
+  ALLERGY
+}
+
+model User {
+  id                 Int                  @id @default(autoincrement())
+  accountId          Int                  @unique @map("account_id")
+  account            Account              @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  fullName           String?              @map("full_name")
+  gender             Gender               @default(OTHER)
+  age                Int?
+  height             Float?
+  weight             Float?
+  hasCompletedSetup  Boolean              @default(false) @map("has_completed_setup")
+  goals              UserGoal[]
+  weightHistory      WeightHistory[]
+  meals              Meal[]
+  dailyNutritionLogs DailyNutritionLog[]
+  foodPreferences    UserFoodPreference[]
+  mealSchedules      MealSchedule[]
+  createdAt          DateTime             @default(now()) @map("created_at")
+  updatedAt          DateTime             @updatedAt @map("updated_at")
+
+  @@map("users")
+}
+
+model UserGoal {
+  id             Int       @id @default(autoincrement())
+  userId         Int       @map("user_id")
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  targetCalories Int       @map("target_calories")
+  targetProtein  Int       @map("target_protein")
+  targetCarbs    Int       @map("target_carbs")
+  targetFat      Int       @map("target_fat")
+  targetWeight   Float?    @map("target_weight")
+  goalType       GoalType  @default(GENERAL) @map("goal_type")
+  activityLevel  String    @default("moderate") @map("activity_level")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@map("user_goals")
+}
+
+model WeightHistory {
+  id         Int      @id @default(autoincrement())
+  userId     Int      @map("user_id")
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  weight     Float
+  note       String?
+  recordedAt DateTime @default(now()) @map("recorded_at")
+
+  @@index([userId, recordedAt])
+  @@map("weight_history")
+}
+
+model UserFoodPreference {
+  id             Int            @id @default(autoincrement())
+  userId         Int            @map("user_id")
+  user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  foodName       String         @map("food_name")
+  preferenceType PreferenceType @default(FAVORITE) @map("preference_type")
+  mealSlot       String?        @default("any") @map("meal_slot")
+  note           String?
+  createdAt      DateTime       @default(now()) @map("created_at")
+  updatedAt      DateTime       @updatedAt @map("updated_at")
+
+  @@unique([userId, foodName, preferenceType])
+  @@index([userId])
+  @@map("user_food_preferences")
+}
+
+// =====================================================
+// 3. Thực phẩm & Bữa ăn (Foods & Nutrition)
+// =====================================================
+enum MealType {
+  BREAKFAST
+  LUNCH
+  DINNER
+  SNACK
+}
+
+model FoodCategory {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  foods     Food[]
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("food_categories")
+}
+
+model Food {
+  id          Int           @id @default(autoincrement())
+  name        String
+  categoryId  Int?          @map("category_id")
+  category    FoodCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  calories    Float
+  protein     Float
+  carbs       Float
+  fat         Float
+  fiber       Float?        @default(0)
+  servingSize String?       @map("serving_size")
+  imagePath   String?       @map("image_path")
+  mealItems   MealItem[]
+  createdAt   DateTime      @default(now()) @map("created_at")
+
+  @@index([categoryId])
+  @@map("foods")
+}
+
+model Meal {
+  id        Int        @id @default(autoincrement())
+  userId    Int        @map("user_id")
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mealType  MealType   @map("meal_type")
+  mealDate  DateTime   @db.Date @map("meal_date")
+  items     MealItem[]
+  createdAt DateTime   @default(now()) @map("created_at")
+
+  @@index([userId, mealDate])
+  @@map("meals")
+}
+
+model MealItem {
+  id        Int      @id @default(autoincrement())
+  mealId    Int      @map("meal_id")
+  meal      Meal     @relation(fields: [mealId], references: [id], onDelete: Cascade)
+  foodId    Int      @map("food_id")
+  food      Food     @relation(fields: [foodId], references: [id], onDelete: Cascade)
+  quantity  Float    @default(1.0)
+  calories  Float
+  protein   Float
+  carbs     Float
+  fat       Float
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([mealId])
+  @@index([foodId])
+  @@map("meal_items")
+}
+
+model DailyNutritionLog {
+  id            Int      @id @default(autoincrement())
+  userId        Int      @map("user_id")
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  date          DateTime @db.Date
+  totalCalories Float    @default(0) @map("total_calories")
+  totalProtein  Float    @default(0) @map("total_protein")
+  totalCarbs    Float    @default(0) @map("total_carbs")
+  totalFat      Float    @default(0) @map("total_fat")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  @@unique([userId, date])
+  @@index([userId])
+  @@map("daily_nutrition_logs")
+}
+
+// =====================================================
+// 4. Kế hoạch ăn uống (Meal Schedules)
+// =====================================================
+model MealSchedule {
+  id             Int                @id @default(autoincrement())
+  userId         Int                @map("user_id")
+  user           User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name           String
+  description    String?
+  startDate      DateTime           @db.Date @map("start_date")
+  endDate        DateTime           @db.Date @map("end_date")
+  color          String?            @default("#FB923C")
+  targetCalories Int?               @map("target_calories")
+  items          MealScheduleItem[]
+  createdAt      DateTime           @default(now()) @map("created_at")
+  updatedAt      DateTime           @updatedAt @map("updated_at")
+
+  @@index([userId])
+  @@map("meal_schedules")
+}
+
+model MealScheduleItem {
+  id         Int          @id @default(autoincrement())
+  scheduleId Int          @map("schedule_id")
+  schedule   MealSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+  dayOffset  Int          @default(0) @map("day_offset")
+  mealType   MealType     @map("meal_type")
+  name       String
+  serving    String?
+  calories   Float?
+  protein    Float?
+  carbs      Float?
+  fat        Float?
+  notes      String?
+  sortOrder  Int          @default(0) @map("sort_order")
+  createdAt  DateTime     @default(now()) @map("created_at")
+
+  @@index([scheduleId])
+  @@map("meal_schedule_items")
+}

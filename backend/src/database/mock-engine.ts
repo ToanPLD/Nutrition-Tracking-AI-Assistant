@@ -577,15 +577,50 @@ export const executeMockSql = (sql: string, params: any[] = []): { rows?: any[];
     // Chat messages
     if (upperSql.includes('CHATMESSAGES')) {
       const id = localStore.nextId('chatmessages', 'message_id');
-      const [session_id, sender, message_text, imgUrlOrThinking, imgNameOrInsight] = params;
+      let session_id: number;
+      let sender: string;
+      let message_text: string;
+      let p3: any;
+      let p4: any;
+
+      if (params.length === 4 && upperSql.includes("'AI'")) {
+        [session_id, message_text, p3, p4] = params;
+        sender = 'ai';
+      } else if (params.length === 4 && upperSql.includes("'USER'")) {
+        [session_id, message_text, p3, p4] = params;
+        sender = 'user';
+      } else {
+        [session_id, sender, message_text, p3, p4] = params;
+      }
+
+      const isAi = sender === 'ai';
+      let parsedThinking: any = null;
+      if (p3) {
+        if (typeof p3 === 'string' && p3.trim().startsWith('[')) {
+          try { parsedThinking = JSON.parse(p3); } catch { parsedThinking = null; }
+        } else if (Array.isArray(p3)) {
+          parsedThinking = p3;
+        }
+      }
+
+      let parsedInsight: any = null;
+      if (p4) {
+        if (typeof p4 === 'string' && p4.trim().startsWith('{')) {
+          try { parsedInsight = JSON.parse(p4); } catch { parsedInsight = null; }
+        } else if (typeof p4 === 'object') {
+          parsedInsight = p4;
+        }
+      }
+
       localStore.data.chatmessages.push({
         message_id: id,
         session_id,
         sender,
         message_text,
-        image_url: typeof imgUrlOrThinking === 'string' && !imgUrlOrThinking.startsWith('[') ? imgUrlOrThinking : null,
-        thinking_steps: typeof imgUrlOrThinking === 'string' && imgUrlOrThinking.startsWith('[') ? JSON.parse(imgUrlOrThinking) : null,
-        food_insight: typeof imgNameOrInsight === 'string' && imgNameOrInsight.startsWith('{') ? JSON.parse(imgNameOrInsight) : null,
+        image_url: !isAi && typeof p3 === 'string' && !p3.startsWith('[') ? p3 : null,
+        image_name: !isAi && typeof p4 === 'string' && !p4.startsWith('{') ? p4 : null,
+        thinking_steps: isAi ? parsedThinking : null,
+        food_insight: isAi ? parsedInsight : null,
         created_at: new Date().toISOString(),
       });
       localStore.save();
