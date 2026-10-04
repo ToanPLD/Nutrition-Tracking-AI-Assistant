@@ -1,211 +1,67 @@
-import { Request, Response, NextFunction } from 'express';
-import { adminService } from './admin.service';
-import { sendSuccess } from '../../shared/responses/api-response';
+import {
+  Controller,
+  Get,
+  Patch,
+  Param,
+  Body,
+  Query,
+  ParseIntPipe,
+  DefaultValuePipe,
+  UseGuards,
+} from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiQuery, ApiBearerAuth } from '@nestjs/swagger';
+import { AdminService } from './admin.service';
+import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../../common/guards/roles.guard';
+import { Roles } from '../../common/decorators/roles.decorator';
+import { CurrentUser, CurrentUserPayload } from '../../common/decorators/current-user.decorator';
+import { Role, AccountStatus } from '@prisma/client';
 
-export const getAdminProfile = async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const result = await adminService.getAdminProfile(req.user!.accountId);
-    return sendSuccess(res, result);
-  } catch (error) {
-    next(error);
-  }
-};
+@ApiTags('Admin')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(Role.ADMIN)
+@Controller('admin')
+export class AdminController {
+  constructor(private adminService: AdminService) {}
 
-export const getAdminStats = async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const result = await adminService.getAdminStats();
-    return sendSuccess(res, result);
-  } catch (error) {
-    next(error);
+  @Get('users')
+  @ApiOperation({ summary: 'List all accounts with pagination (Admin only)' })
+  @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
+  @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
+  async getUsers(
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number = 1,
+    @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number = 20,
+  ) {
+    const data = await this.adminService.getUsers(page, limit);
+    return { data };
   }
-};
 
-export const getAdminAnalytics = async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const result = await adminService.getAdminAnalytics();
-    return sendSuccess(res, result);
-  } catch (error) {
-    next(error);
+  @Patch('users/:id/status')
+  @ApiOperation({ summary: 'Update user account status (Admin only)' })
+  async updateUserStatus(
+    @CurrentUser() admin: CurrentUserPayload,
+    @Param('id', ParseIntPipe) targetId: number,
+    @Body('status') status: AccountStatus,
+  ) {
+    const updated = await this.adminService.updateUserStatus(
+      admin.accountId,
+      targetId,
+      status,
+    );
+    return {
+      message: 'Account status updated and audit logged',
+      data: updated,
+    };
   }
-};
 
-export const getSecurityOverview = async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const result = await adminService.getSecurityOverview();
-    return sendSuccess(res, result);
-  } catch (error) {
-    next(error);
+  @Get('audit-logs')
+  @ApiOperation({ summary: 'View administrative audit logs (Admin only)' })
+  async getAuditLogs(
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number = 1,
+    @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number = 20,
+  ) {
+    const data = await this.adminService.getAuditLogs(page, limit);
+    return { data };
   }
-};
-
-export const getRoleAccounts = async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const result = await adminService.getRoleAccounts();
-    return sendSuccess(res, result);
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const updateAccountRole = async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const targetAccountId = Number(req.params.accountId);
-    const { role } = req.body;
-    const result = await adminService.updateAccountRole(req.user!.accountId, targetAccountId, role);
-    return sendSuccess(res, result, 'Role updated successfully');
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const getAuditLogs = async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const limit = Number(req.query.limit) || 50;
-    const result = await adminService.getAuditLogs(limit);
-    return sendSuccess(res, result);
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const getAllUsers = async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const page = Number(req.query.page) || 1;
-    const limit = Number(req.query.limit) || 20;
-    const search = (req.query.search as string) || '';
-    const result = await adminService.getAllUsers(page, limit, search);
-    return sendSuccess(res, result);
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const getUserById = async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const userId = Number(req.params.userId);
-    const result = await adminService.getUserById(userId);
-    return sendSuccess(res, result);
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const getUserStatistics = async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const userId = Number(req.params.userId);
-    const result = await adminService.getUserStatistics(userId);
-    return sendSuccess(res, result);
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const createUser = async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const result = await adminService.createUser(req.user!.accountId, req.body);
-    return sendSuccess(res, result, 'User created successfully', 201);
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const updateUser = async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const userId = Number(req.params.userId);
-    const result = await adminService.updateUser(req.user!.accountId, userId, req.body);
-    return sendSuccess(res, result, 'User updated successfully');
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const updateUserStatus = async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const userId = Number(req.params.userId);
-    const { status } = req.body;
-    const result = await adminService.updateUserStatus(req.user!.accountId, userId, status);
-    return sendSuccess(res, result, 'User status updated');
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const deleteUser = async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const userId = Number(req.params.userId);
-    const result = await adminService.deleteUser(req.user!.accountId, userId);
-    return sendSuccess(res, result, 'User deleted');
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const bulkUpdateUserStatus = async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const { userIds, status } = req.body;
-    const result = await adminService.bulkUpdateUserStatus(req.user!.accountId, userIds, status);
-    return sendSuccess(res, result, 'Bulk status updated');
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const getAllFoods = async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const page = Number(req.query.page) || 1;
-    const limit = Number(req.query.limit) || 50;
-    const search = (req.query.search as string) || '';
-    const result = await adminService.getAllFoods(page, limit, search);
-    return sendSuccess(res, result);
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const getFoodCategories = async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const result = await adminService.getFoodCategories();
-    return sendSuccess(res, result);
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const getFoodById = async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const foodId = Number(req.params.foodId);
-    const result = await adminService.getFoodById(foodId);
-    return sendSuccess(res, result);
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const createFood = async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const result = await adminService.createFood(req.user!.accountId, req.body);
-    return sendSuccess(res, result, 'Food item created', 201);
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const updateFood = async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const foodId = Number(req.params.foodId);
-    const result = await adminService.updateFood(req.user!.accountId, foodId, req.body);
-    return sendSuccess(res, result, 'Food item updated');
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const deleteFood = async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const foodId = Number(req.params.foodId);
-    const result = await adminService.deleteFood(req.user!.accountId, foodId);
-    return sendSuccess(res, result, 'Food item deleted');
-  } catch (error) {
-    next(error);
-  }
-};
+}
