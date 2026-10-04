@@ -5,6 +5,8 @@ import { HealthModule } from './modules/health/health.module';
 import { PrismaModule } from './database/prisma.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
+import { FoodsModule } from './modules/foods/foods.module';
+import { MealsModule } from './modules/meals/meals.module';
 import { TransformResponseInterceptor } from './common/interceptors/transform-response.interceptor';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 
@@ -17,6 +19,8 @@ import { HttpExceptionFilter } from './common/filters/http-exception.filter';
     PrismaModule,
     AuthModule,
     UsersModule,
+    FoodsModule,
+    MealsModule,
     HealthModule,
   ],
   providers: [
