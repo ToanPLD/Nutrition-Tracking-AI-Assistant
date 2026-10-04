@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
 import { CreateMealDto } from './dto/create-meal.dto';
 import { UsersService } from '../users/users.service';
@@ -197,7 +198,11 @@ export class MealsService {
     });
   }
 
-  private async recalculateDailyLog(tx: any, userId: number, date: Date) {
+  private async recalculateDailyLog(
+    tx: Prisma.TransactionClient,
+    userId: number,
+    date: Date,
+  ) {
     // Sum all meal items logged for this date
     const allItems = await tx.mealItem.findMany({
       where: {

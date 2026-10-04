@@ -40,7 +40,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
       }
     } else if (exception instanceof Error) {
       this.logger.error(`Unhandled Exception: ${exception.message}`, exception.stack);
-      message = exception.message;
+      message = 'Internal server error';
     }
 
     const errorPayload: ApiErrorResponse = {

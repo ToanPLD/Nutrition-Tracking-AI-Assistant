@@ -88,6 +88,33 @@ export class UsersService {
       });
     }
 
+    // Persist baseline goals if currently unset
+    const existingGoal = await this.prisma.userGoal.findFirst({
+      where: { userId },
+    });
+
+    if (!existingGoal && updated.height && updated.weight && updated.age) {
+      const targetCalories = UsersService.calculateTdee({
+        weight: updated.weight,
+        height: updated.height,
+        age: updated.age,
+        gender: updated.gender,
+        goalType: 'MAINTENANCE',
+      });
+
+      await this.prisma.userGoal.create({
+        data: {
+          userId,
+          targetCalories,
+          targetProtein: Math.round((targetCalories * 0.25) / 4),
+          targetCarbs: Math.round((targetCalories * 0.5) / 4),
+          targetFat: Math.round((targetCalories * 0.25) / 9),
+          goalType: GoalType.MAINTENANCE,
+          activityLevel: 'moderate',
+        },
+      });
+    }
+
     return updated;
   }
 
