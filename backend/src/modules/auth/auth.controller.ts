@@ -1,82 +1,59 @@
-import { Request, Response, NextFunction } from 'express';
-import { authService } from './auth.service';
-import { sendSuccess } from '../../shared/responses/api-response';
-import { UnauthorizedError } from '../../shared/errors/app-error';
-import { verifyToken } from '../../shared/utils/jwt';
+import {
+  Controller,
+  Post,
+  Get,
+  Body,
+  UseGuards,
+  HttpCode,
+  HttpStatus,
+} from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
+import { AuthService } from './auth.service';
+import { RegisterDto } from './dto/register.dto';
+import { LoginDto } from './dto/login.dto';
+import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { CurrentUser, CurrentUserPayload } from '../../common/decorators/current-user.decorator';
 
-export const requestRegisterOtp = async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const result = await authService.requestRegisterOtp(req.body);
-    return sendSuccess(res, result, 'Verification code sent');
-  } catch (error) {
-    next(error);
+@ApiTags('Auth')
+@Controller('auth')
+export class AuthController {
+  constructor(private authService: AuthService) {}
+
+  @Post('register')
+  @ApiOperation({ summary: 'Register a new user account' })
+  @ApiResponse({ status: 201, description: 'Account successfully registered' })
+  @ApiResponse({ status: 409, description: 'Email already exists' })
+  async register(@Body() dto: RegisterDto) {
+    const result = await this.authService.register(dto);
+    return {
+      message: 'Account registered successfully',
+      data: result,
+    };
   }
-};
 
-export const verifyRegisterOtp = async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const result = await authService.verifyRegisterOtp(req.body);
-    return sendSuccess(res, result, 'Registration successful', 201);
-  } catch (error) {
-    next(error);
+  @Post('login')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Login to existing account' })
+  @ApiResponse({ status: 200, description: 'Login successful, returns JWT token' })
+  @ApiResponse({ status: 401, description: 'Invalid email or password' })
+  async login(@Body() dto: LoginDto) {
+    const result = await this.authService.login(dto);
+    return {
+      message: 'Login successful',
+      data: result,
+    };
   }
-};
 
-export const login = async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const result = await authService.login(req.body);
-    return sendSuccess(res, result, 'Login successful');
-  } catch (error) {
-    next(error);
+  @Get('me')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get current user profile and account details' })
+  @ApiResponse({ status: 200, description: 'Returns authenticated user profile' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  async getMe(@CurrentUser() user: CurrentUserPayload) {
+    const profile = await this.authService.getMe(user.accountId);
+    return {
+      data: profile,
+    };
   }
-};
-
-export const forgotPassword = async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const result = await authService.forgotPassword(req.body);
-    return sendSuccess(res, result, 'Reset code sent');
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const verifyResetCode = async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const result = await authService.verifyResetCode(req.body);
-    return sendSuccess(res, result, 'Code verified successfully');
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const resetPassword = async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const result = await authService.resetPassword(req.body);
-    return sendSuccess(res, result, 'Password has been reset');
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const getValidateToken = async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    // Check if authorization header is provided or token is in body
-    const authHeader = req.headers.authorization;
-    const token = authHeader?.startsWith('Bearer ') ? authHeader.split(' ')[1] : req.body.token;
-
-    if (!token) {
-      throw new UnauthorizedError('Token is required');
-    }
-
-    const decoded = verifyToken(token);
-    const result = await authService.validateToken(decoded.accountId);
-    return sendSuccess(res, result, 'Token is valid');
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const getEmailConfigStatus = (req: Request, res: Response) => {
-  const result = authService.getEmailConfigStatus();
-  return sendSuccess(res, result);
-};
+}

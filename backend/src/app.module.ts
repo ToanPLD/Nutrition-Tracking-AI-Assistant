@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { APP_FILTER, APP_INTERCEPTOR } from '@nestjs/core';
 import { HealthModule } from './modules/health/health.module';
 import { PrismaModule } from './database/prisma.module';
+import { AuthModule } from './modules/auth/auth.module';
 import { TransformResponseInterceptor } from './common/interceptors/transform-response.interceptor';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 
@@ -13,6 +14,7 @@ import { HttpExceptionFilter } from './common/filters/http-exception.filter';
       envFilePath: '.env',
     }),
     PrismaModule,
+    AuthModule,
     HealthModule,
   ],
   providers: [
