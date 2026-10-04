@@ -71,12 +71,12 @@ async def test_analyze_endpoint_accepts_json_base64(monkeypatch):
     assert response.json()["name"] == "Bún bò Huế"
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `python -m pytest Cal-AI/tests/test_food_analysis_endpoint.py -v`
 Expected: FAIL (422 Unprocessable Entity because `/api/food/analyze` only accepts Form/File)
 
-- [ ] **Step 3: Implement Dual Ingestion in `Cal-AI/api/routes/food_analysis.py`**
+- [x] **Step 3: Implement Dual Ingestion in `Cal-AI/api/routes/food_analysis.py`**
 
 Define `FoodAnalysisJSONRequest` with Pydantic:
 ```python
@@ -90,12 +90,12 @@ Update `@router.post("/analyze")` to inspect `Request` header:
 - Decode into PIL Image, thumbnail to 512x512, call `get_food_analysis_pipeline().analyze(image=image, filename=..., question=question)`.
 - If parsing fails or invalid image, raise `HTTPException(status_code=400, detail="Invalid image payload")`.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `python -m pytest Cal-AI/tests/test_food_analysis_endpoint.py -v`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add Cal-AI/api/routes/food_analysis.py Cal-AI/tests/test_food_analysis_endpoint.py
@@ -114,7 +114,7 @@ git commit -m "feat(cal-ai): support dual JSON and multipart ingestion on food a
 - Consumes: PIL Image, optional filename or context hint.
 - Produces: `dict` with keys `dish_name`, `vietnamese_name`, `confidence`, `portion` (`estimated_grams`, `description`), `visible_ingredients`, `visual_notes`, `is_food`.
 
-- [ ] **Step 1: Write failing test for GeminiVisionService**
+- [x] **Step 1: Write failing test for GeminiVisionService**
 
 Create `Cal-AI/tests/test_gemini_vision_service.py`:
 ```python
@@ -149,12 +149,12 @@ async def test_gemini_vision_analyze_success():
     assert result["is_food"] is True
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `python -m pytest Cal-AI/tests/test_gemini_vision_service.py -v`
 Expected: FAIL (`ModuleNotFoundError: No module named 'core.services.vision.gemini_vision_service'`)
 
-- [ ] **Step 3: Implement `GeminiVisionService` in `Cal-AI/core/services/vision/gemini_vision_service.py`**
+- [x] **Step 3: Implement `GeminiVisionService` in `Cal-AI/core/services/vision/gemini_vision_service.py`**
 
 - Initialize `AsyncOpenAI` pointing to `settings.LLM_BASE_URL` with `settings.GEMINI_API_KEY`.
 - Maintain `RESILIENT_MODELS = ["gemini-3.8-flash", "gemini-3.1-flash-lite-preview", "gemini-flash-latest"]`.
@@ -165,12 +165,12 @@ Expected: FAIL (`ModuleNotFoundError: No module named 'core.services.vision.gemi
   - Parse JSON response, validate required fields, and return structured dict.
   - If non-food detected, return `{"is_food": False, "confidence": 0.1, "dish_name": "unknown"}`.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `python -m pytest Cal-AI/tests/test_gemini_vision_service.py -v`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add Cal-AI/core/services/vision/gemini_vision_service.py Cal-AI/tests/test_gemini_vision_service.py
@@ -189,7 +189,7 @@ git commit -m "feat(cal-ai): implement GeminiVisionService with visual self-atte
 - Consumes: PIL Image, `GeminiVisionService`, `FoodRAGService`.
 - Produces: Complete food analysis output with name, portion, macros, confidence score, and visual evidence.
 
-- [ ] **Step 1: Write failing test for attentive pipeline flow**
+- [x] **Step 1: Write failing test for attentive pipeline flow**
 
 Create `Cal-AI/tests/test_food_analysis_pipeline.py`:
 ```python
@@ -237,12 +237,12 @@ async def test_pipeline_uses_gemini_vision_and_grounds_macros():
     assert res["confidence"] == 0.95
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `python -m pytest Cal-AI/tests/test_food_analysis_pipeline.py -v`
 Expected: FAIL (AttributeError: 'FoodAnalysisPipeline' has no attribute 'gemini_vision')
 
-- [ ] **Step 3: Integrate `GeminiVisionService` into `FoodAnalysisPipeline`**
+- [x] **Step 3: Integrate `GeminiVisionService` into `FoodAnalysisPipeline`**
 
 In `Cal-AI/core/pipelines/food_analysis_pipeline.py`:
 - Add lazy property `gemini_vision`:
@@ -264,12 +264,12 @@ In `Cal-AI/core/pipelines/food_analysis_pipeline.py`:
   - If no RAG match found, fall back to Gemini's estimated values per portion rather than a hardcoded dummy dish.
   - Return standardized response dictionary.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `python -m pytest Cal-AI/tests/test_food_analysis_pipeline.py -v`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add Cal-AI/core/pipelines/food_analysis_pipeline.py Cal-AI/tests/test_food_analysis_pipeline.py
@@ -289,7 +289,7 @@ git commit -m "feat(cal-ai): integrate Gemini vision and attentive nutrition gro
 - Produces: JSON response with `analysisId`, `name`, `totalKcal`, `protein`, `carbs`, `fats`, `confidence`, `estimatedPortion`.
 - Error behavior: Throws `AppError` on any upstream failure (no silent masking).
 
-- [ ] **Step 1: Update `analyzeImage` in `food-analysis.service.ts`**
+- [x] **Step 1: Update `analyzeImage` in `food-analysis.service.ts`**
 
 In `backend/src/modules/user/services/food-analysis.service.ts`:
 - Adjust the Cal-AI request:
@@ -316,7 +316,7 @@ In `backend/src/modules/user/services/food-analysis.service.ts`:
   ```
 - Map returned fields from Cal-AI response into `foods` and `foodrecognitionresults` database tables.
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add backend/src/modules/user/services/food-analysis.service.ts
@@ -333,7 +333,7 @@ git commit -m "feat(backend): align Cal-AI image scan payload and enforce active
 **Interfaces:**
 - Runs an end-to-end synthetic image test through `GeminiVisionService` and the `/api/food/analyze` route.
 
-- [ ] **Step 1: Write E2E script to verify real Gemini Vision call**
+- [x] **Step 1: Write E2E script to verify real Gemini Vision call**
 
 Create `Cal-AI/scripts/test_food_scan_e2e.py` to:
 - Generate a test food image (or load an existing test image).
@@ -341,12 +341,12 @@ Create `Cal-AI/scripts/test_food_scan_e2e.py` to:
 - Assert output has `dish_name`, `confidence > 0.7`, and valid non-zero macro numbers.
 - Test error reporting: Send invalid base64 string, assert status 400.
 
-- [ ] **Step 2: Execute E2E verification**
+- [x] **Step 2: Execute E2E verification**
 
 Run: `python Cal-AI/scripts/test_food_scan_e2e.py`
 Expected: Output confirms successful dish recognition, accurate macro calculation, and proper error throwing on bad input.
 
-- [ ] **Step 3: Commit and Finalize**
+- [x] **Step 3: Commit and Finalize**
 
 ```bash
 git add Cal-AI/scripts/test_food_scan_e2e.py
