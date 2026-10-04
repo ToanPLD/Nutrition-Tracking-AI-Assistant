@@ -1,5 +1,5 @@
 import { dbQuery, dbQueryOne, dbExecute, dbTransaction } from '../../../database/query';
-import { NotFoundError } from '../../../shared/errors/app-error';
+import { AppError, NotFoundError } from '../../../shared/errors/app-error';
 import { ENV } from '../../../config/env';
 import { profileService } from './profile.service';
 import { mealService } from './meal.service';
@@ -82,40 +82,52 @@ export class FoodAnalysisService {
     );
     const imageId = imgResult.insertId;
 
-    // Try calling CalAI Python backend if available
-    let recognizedFood = {
-      name: 'Salad with Grilled Chicken',
-      calories: 450,
-      protein: 38,
-      carbs: 18,
-      fat: 22,
-      confidence: 0.88,
-    };
+    // Call CalAI Python backend with resilient timeout
+    const imagePayload = persistentImageUrl || data.imageUrl;
+    let result: any = null;
 
     try {
       const response = await fetch(`${ENV.CAL_AI_BASE_URL}/api/food/analyze`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image: data.imageUrl }),
-        signal: AbortSignal.timeout(5000),
+        body: JSON.stringify({ image: imagePayload, question: '' }),
+        signal: AbortSignal.timeout(ENV.CAL_AI_VISION_TIMEOUT_MS || 60000),
       });
 
-      if (response.ok) {
-        const result = (await response.json()) as any;
-        if (result && result.name) {
-          recognizedFood = {
-            name: result.name,
-            calories: Number(result.calories || 0),
-            protein: Number(result.protein || 0),
-            carbs: Number(result.carbs || 0),
-            fat: Number(result.fat || 0),
-            confidence: Number(result.confidence || 0.85),
-          };
-        }
+      if (!response.ok) {
+        const errBody = (await response.json().catch(() => ({}))) as any;
+        throw new AppError(
+          errBody.detail || `Cal-AI analysis returned HTTP ${response.status}`,
+          response.status >= 500 ? 502 : 400
+        );
       }
-    } catch {
-      // Fallback to intelligent estimate
+
+      result = (await response.json()) as any;
+    } catch (err: any) {
+      if (err instanceof AppError) {
+        throw err;
+      }
+      const isTimeout = err.name === 'TimeoutError' || err.name === 'AbortError';
+      const msg = isTimeout
+        ? `Cal-AI food analysis timed out after ${ENV.CAL_AI_VISION_TIMEOUT_MS || 60000}ms`
+        : `Failed to connect to Cal-AI service: ${err.message || err}`;
+      console.error('[FoodAnalysis]', msg);
+      throw new AppError(msg, 502);
     }
+
+    if (!result || !result.name) {
+      throw new AppError('Invalid response payload from Cal-AI vision service', 502);
+    }
+
+    const recognizedFood = {
+      name: result.name,
+      calories: Number(result.calories || 0),
+      protein: Number(result.protein || 0),
+      carbs: Number(result.carbs || 0),
+      fat: Number(result.fat || 0),
+      confidence: Number(result.confidence || 0.85),
+      estimatedPortion: result.estimated_portion || '1 serving (approx. 350g)',
+    };
 
     // Ensure food exists in foods table
     let foodId: number;
@@ -148,7 +160,7 @@ export class FoodAnalysisService {
       carbs: recognizedFood.carbs,
       fats: recognizedFood.fat,
       confidence: recognizedFood.confidence,
-      estimatedPortion: '1 serving (approx. 350g)',
+      estimatedPortion: recognizedFood.estimatedPortion,
     };
   }
 
