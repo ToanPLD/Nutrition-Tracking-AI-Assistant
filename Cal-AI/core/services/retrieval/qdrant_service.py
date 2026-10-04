@@ -1,7 +1,13 @@
 import hashlib
-from qdrant_client import QdrantClient
-from qdrant_client.models import PointStruct, VectorParams, Distance
-from qdrant_client import models
+try:
+    from qdrant_client import QdrantClient
+    from qdrant_client.models import PointStruct, VectorParams, Distance
+    from qdrant_client import models
+except Exception:
+    from core.services.retrieval.qdrant_rest_client import QdrantRestClient as QdrantClient, models
+    PointStruct = getattr(models, "PointStruct", None)
+    VectorParams = getattr(models, "VectorParams", None)
+    Distance = getattr(models, "Distance", None)
 from config.settings import settings
 
 
@@ -9,7 +15,7 @@ class QdrantService:
 
     def __init__(self):
 
-        print("👉 QDRANT URL:", settings.QDRANT_URL)
+        print("[QDRANT] URL:", settings.QDRANT_URL)
 
         if settings.QDRANT_URL.startswith("https"):
             self.client = QdrantClient(
@@ -115,24 +121,66 @@ class QdrantService:
             except Exception as e:
                 print("❌ Upsert error:", e)
 
-    def _build_range_filter(self, min_calories=None, max_calories=None):
-        if min_calories is None and max_calories is None:
-            return None
+    def build_nutrition_filter(
+        self,
+        meal_slot=None,
+        category=None,
+        min_calories=None,
+        max_calories=None,
+        excluded_terms=None,
+    ):
+        must_conditions = []
+        must_not_conditions = []
 
-        range_kwargs = {}
-        if min_calories is not None:
-            range_kwargs["gte"] = min_calories
-        if max_calories is not None:
-            range_kwargs["lte"] = max_calories
+        if meal_slot:
+            must_conditions.append(
+                models.FieldCondition(
+                    key="meal_slot",
+                    match=models.MatchValue(value=meal_slot)
+                )
+            )
 
-        return models.Filter(
-            must=[
+        if category:
+            must_conditions.append(
+                models.FieldCondition(
+                    key="category",
+                    match=models.MatchValue(value=category)
+                )
+            )
+
+        if min_calories is not None or max_calories is not None:
+            range_kwargs = {}
+            if min_calories is not None:
+                range_kwargs["gte"] = min_calories
+            if max_calories is not None:
+                range_kwargs["lte"] = max_calories
+            must_conditions.append(
                 models.FieldCondition(
                     key="calories",
                     range=models.Range(**range_kwargs)
                 )
-            ]
+            )
+
+        if excluded_terms:
+            for term in excluded_terms:
+                if term and str(term).strip():
+                    must_not_conditions.append(
+                        models.FieldCondition(
+                            key="ingredients",
+                            match=models.MatchText(text=str(term).strip())
+                        )
+                    )
+
+        if not must_conditions and not must_not_conditions:
+            return None
+
+        return models.Filter(
+            must=must_conditions if must_conditions else None,
+            must_not=must_not_conditions if must_not_conditions else None,
         )
+
+    def _build_range_filter(self, min_calories=None, max_calories=None):
+        return self.build_nutrition_filter(min_calories=min_calories, max_calories=max_calories)
 
     def search(
         self,
@@ -142,6 +190,9 @@ class QdrantService:
         query_filter=None,
         min_calories=None,
         max_calories=None,
+        meal_slot=None,
+        category=None,
+        excluded_terms=None,
         with_vectors=False
     ):
 
@@ -149,9 +200,12 @@ class QdrantService:
             return []
 
         try:
-            final_filter = query_filter or self._build_range_filter(
+            final_filter = query_filter or self.build_nutrition_filter(
+                meal_slot=meal_slot,
+                category=category,
                 min_calories=min_calories,
-                max_calories=max_calories
+                max_calories=max_calories,
+                excluded_terms=excluded_terms,
             )
 
             return self.client.search(

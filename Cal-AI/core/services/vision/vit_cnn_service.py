@@ -3,7 +3,10 @@ import re
 import unicodedata
 
 import numpy as np
-from qdrant_client import QdrantClient
+try:
+    from qdrant_client import QdrantClient
+except Exception:
+    from core.services.retrieval.qdrant_rest_client import QdrantRestClient as QdrantClient
 
 from config.settings import settings
 from core.embedding.clip_service import CLIPService

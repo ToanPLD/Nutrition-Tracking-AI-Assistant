@@ -15,7 +15,10 @@ import os
 import re
 import unicodedata
 
-from qdrant_client import models as qdrant_models
+try:
+    from qdrant_client import models as qdrant_models
+except Exception:
+    from core.services.retrieval.qdrant_rest_client import models as qdrant_models
 
 class FoodAnalysisPipeline:
 

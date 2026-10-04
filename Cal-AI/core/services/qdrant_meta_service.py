@@ -1,4 +1,7 @@
-from qdrant_client import QdrantClient, models
+try:
+    from qdrant_client import QdrantClient, models
+except Exception:
+    from core.services.retrieval.qdrant_rest_client import QdrantRestClient as QdrantClient, models
 from config.settings import settings
 
 
