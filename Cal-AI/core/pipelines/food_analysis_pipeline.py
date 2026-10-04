@@ -33,7 +33,14 @@ class FoodAnalysisPipeline:
         self._response_cache = None
         self._llm = None
         self._image_classifier = None
+        self._gemini_vision = None
 
+    @property
+    def gemini_vision(self):
+        if self._gemini_vision is None:
+            from core.services.vision.gemini_vision_service import GeminiVisionService
+            self._gemini_vision = GeminiVisionService()
+        return self._gemini_vision
     @property
     def qwen(self):
         if self._qwen is None:
@@ -888,237 +895,147 @@ class FoodAnalysisPipeline:
                     print("[FoodAnalysis] cache-hit log_meal failed:", exc)
             return cached
 
-        # STEP 1: FILENAME SHORT-CIRCUIT (try BEFORE the slow vision call).
-        # If the upload filename matches a recipe row exactly, the DB record
-        # is authoritative — running Qwen-VL (60-100s) and the YOLO+CLIP
-        # classifier (~5s) afterward only to overwrite their output is pure
-        # waste. ~95% of dataset uploads hit this path; cuts total latency
-        # from ~120s to ~50s for those.
+        # STEP 1: FILENAME SHORT-CIRCUIT (try direct match before vision call)
         direct_match = self._lookup_by_filename(filename)
-        vit_cnn = {}
         vision = None
         if direct_match:
             vision = self._vision_from_match(direct_match, filename)
         else:
-            # STEP 1a: real-user image — fall back to classifier + Qwen-VL.
-            if settings.IMAGE_CLASSIFIER_ENABLED:
-                vit_cnn = self.image_classifier.classify(image, filename_hint=filename)
-            classifier_hint = self._classifier_query_text(vit_cnn)
-            vision = await self.qwen.analyze_food(
+            # Multi-modal Vision Attention with Gemini Vision Service
+            vision = await self.gemini_vision.analyze_food(
                 image,
-                filename_hint=filename,
-                vision_evidence=classifier_hint or None,
-            )
-            vision = self._merge_classifier_with_vision(vision, vit_cnn)
-            vision = self._normalize_vision_details(vision)
-        dish = vision.get("dish_name", "")
-        confidence = self._to_float(vision.get("confidence")) or 0
-        if confidence > 1:
-            confidence = confidence / 100
-        query_text = self._enrich_query(vision)
-        has_visual_dish = bool(dish and not self._is_unknown_vision(vision))
-        has_classifier_hint = bool(self._classifier_query_text(vit_cnn))
-        should_search = has_visual_dish or has_classifier_hint or bool(direct_match)
-
-        # STEP 2: CACHE
-        img_key = "img_" + self._image_key(image)
-        txt_key = "txt768_" + query_text
-
-        image_vec = None
-        text_vec = None
-        if should_search:
-            image_vec = self.cache.get_or_set(
-                img_key,
-                lambda: self.clip.embed_image_pil(image)
+                hint=question or filename or "",
             )
 
-            search_text = query_text if has_visual_dish else self._classifier_query_text(vit_cnn)
-            text_vec = self.cache.get_or_set(
-                "txt768_" + search_text,
-                lambda: self.text_embed.embed(search_text)
-            )
+        # STEP 2: Food detection & confidence thresholding
+        is_food = vision.get("is_food", True)
+        confidence = self._to_float(vision.get("confidence")) or 0.0
+        if confidence > 1.0:
+            confidence = confidence / 100.0
 
-        # STEP 3: RAG
+        if not is_food or confidence < 0.2:
+            unrecog_name = vision.get("vietnamese_name") or vision.get("dish_name") or "Không rõ món ăn"
+            result = {
+                "name": unrecog_name,
+                "dish_name": unrecog_name,
+                "is_food": False,
+                "confidence": round(confidence, 2) if confidence > 0 else 0.1,
+                "calories": 0,
+                "protein": 0.0,
+                "carbs": 0.0,
+                "fat": 0.0,
+                "estimated_portion": "N/A",
+                "visible_ingredients": vision.get("visible_ingredients", []),
+                "visual_notes": vision.get("visual_notes", "Không phát hiện món ăn trong ảnh"),
+                "cache_hit": False,
+            }
+            return result
+
+        # STEP 3: Food recognition & portion extraction
+        dish = vision.get("vietnamese_name") or vision.get("dish_name") or ""
+        portion_info = vision.get("portion") or {}
+        estimated_grams = float(portion_info.get("estimated_grams") or 350.0)
+        portion_description = portion_info.get("description") or f"1 khẩu phần (khoảng {int(estimated_grams)}g)"
+
+        # STEP 4: Vector retrieval grounding (Qdrant)
         hits = []
-        if should_search:
-            hits = self.rag.hybrid_search(
-                image_vec,
-                text_vec,
-                dish,
-                vision_context=vision,
-                top_k=settings.RAG_CANDIDATE_TOP_K
-            )
-
-        # STEP 4: RERANK
-        if hits:
-            hits = self.rerank.rerank(query_text, hits)
-
-        best = hits[0].payload if hits else {}
-        # Filename-matched record beats whatever the vector search picked —
-        # a deterministic dataset row is more trustworthy than CLIP top-1
-        # when CLIP has been observed to surface unrelated dishes.
+        best = {}
         if direct_match:
             best = direct_match
+        elif dish:
+            try:
+                hits = self.rag.hybrid_search(
+                    dish_name=dish,
+                    vision_context=vision,
+                    top_k=settings.RAG_CANDIDATE_TOP_K
+                )
+            except Exception as e:
+                print(f"[FoodAnalysis] RAG hybrid search failed: {e}")
+                hits = []
 
-        # STEP 5: NUTRITION ESTIMATE
-        vision_estimate = self._nutrition_estimate_from_vision(vision)
-        rag_portion_estimate = self._portion_estimate_from_rag(vision, best)
-        if vision_estimate:
-            estimated, estimate_source = vision_estimate, "vision_model_estimate"
-        elif rag_portion_estimate:
-            estimated, estimate_source = rag_portion_estimate, "rag_portion_estimate"
-        else:
-            estimated, estimate_source = None, "not_available"
+            if hits:
+                best = hits[0].payload if hasattr(hits[0], "payload") else (hits[0] if isinstance(hits[0], dict) else {})
 
-        # STEP 5b: DISH-NAME RAG FALLBACK
-        # Vision recognized the dish but the hybrid search + portion estimator
-        # both failed to surface macros (common for VN dishes when vision
-        # underestimates grams or the best payload is a recipe row without
-        # per_100g fields). Re-search using only the dish_name and synthesize
-        # an estimate from per_100g × default portion for the visual_form.
-        if estimated is None and dish and not self._is_unknown_vision(vision):
-            fallback_payload = self._dish_name_nutrition_lookup(dish)
-            if fallback_payload:
-                fallback_per_100g = self._payload_nutrition_per_100g(fallback_payload)
-                if fallback_per_100g:
-                    grams = self._default_portion_grams(vision)
-                    scale = grams / 100
-                    matched_name = (
-                        fallback_payload.get("food_name")
-                        or fallback_payload.get("name")
-                        or fallback_payload.get("title")
-                        or dish
-                    )
-                    source_label = self._source_label(fallback_payload.get("source_collection"))
-                    visual_form_label = self._visual_form_label(vision)
-                    # Build a transparent, user-facing basis string. Uses
-                    # friendly Vietnamese labels — no Qdrant collection names
-                    # or visual_form enum buckets leak to the end user.
-                    per_100g_parts = []
-                    for label, key, unit in [
-                        ("kcal", "calories", ""),
-                        ("protein", "protein", "g"),
-                        ("carb", "carbs", "g"),
-                        ("fat", "fat", "g"),
-                    ]:
-                        value = fallback_per_100g.get(key)
-                        if value not in (None, ""):
-                            per_100g_parts.append(f"{label} {value}{unit}/100g")
-                    per_100g_text = ", ".join(per_100g_parts) if per_100g_parts else "không có dữ liệu macro"
-                    basis_text = (
-                        f"Tra cứu trong {source_label}, mục '{matched_name}' "
-                        f"có {per_100g_text}. "
-                        f"Áp dụng khẩu phần trung bình {grams} g cho {visual_form_label} "
-                        "vì ảnh không cung cấp đủ thông tin để đo chính xác khối lượng."
-                    )
-                    estimated = {
-                        "calories": (
-                            round(fallback_per_100g["calories"] * scale)
-                            if fallback_per_100g.get("calories") is not None else None
-                        ),
-                        "protein": (
-                            round(fallback_per_100g["protein"] * scale, 1)
-                            if fallback_per_100g.get("protein") is not None else None
-                        ),
-                        "carbs": (
-                            round(fallback_per_100g["carbs"] * scale, 1)
-                            if fallback_per_100g.get("carbs") is not None else None
-                        ),
-                        "fat": (
-                            round(fallback_per_100g["fat"] * scale, 1)
-                            if fallback_per_100g.get("fat") is not None else None
-                        ),
-                        "serving_size": f"khoảng {grams} g ({visual_form_label})",
-                        "basis": basis_text,
-                        "matched_food_name": matched_name,
-                        "source_label": source_label,
-                        "per_100g": fallback_per_100g,
-                        "assumed_grams": grams,
-                        "portion_label": visual_form_label,
-                        "reliability_note": (
-                            "Số liệu /100g có nguồn rõ ràng; khẩu phần là ước tính trung bình "
-                            "vì ảnh không đủ thông tin để cân đo chính xác."
-                        ),
-                    }
-                    estimate_source = "dish_name_rag_fallback"
-                    # Promote the fallback payload so the LLM context sees the
-                    # canonical row instead of a less-nutritious neighbor.
-                    if not self._payload_nutrition_per_100g(best):
-                        best = fallback_payload
+        # STEP 5: Scale macros by estimated portion grams (database is per 100g)
+        scale = estimated_grams / 100.0
+        calories = 0
+        protein = 0.0
+        carbs = 0.0
+        fat = 0.0
 
-        summary = self._nutrition_summary(best, estimated)
+        if best:
+            raw_cal = best.get("calories")
+            raw_pro = best.get("protein")
+            raw_carbs = best.get("carbs")
+            raw_fat = best.get("fat")
 
-        warnings = []
-        if confidence < settings.VISION_MIN_CONFIDENCE:
-            warnings.append(
-                "Độ tin cậy nhận diện thấp; kết quả nutrition được xem là ước tính."
-            )
-        if best and self.rag._is_packaged_payload(best):
-            warnings.append(
-                "Dữ liệu RAG là sản phẩm đóng gói; chỉ nên dùng khi ảnh có bao bì/nhãn tương ứng."
-            )
+            if raw_cal is not None:
+                calories = round(float(raw_cal) * scale)
+            if raw_pro is not None:
+                protein = round(float(raw_pro) * scale, 1)
+            if raw_carbs is not None:
+                carbs = round(float(raw_carbs) * scale, 1)
+            if raw_fat is not None:
+                fat = round(float(raw_fat) * scale, 1)
 
-        # STEP 6: RESULT
+        # Fallback if vector DB had no macros or no match
+        if calories == 0 and protein == 0.0 and carbs == 0.0 and fat == 0.0:
+            v_nut = vision.get("nutrition") or {}
+            if v_nut:
+                calories = round(float(v_nut.get("calories") or 350) * (estimated_grams / 350.0))
+                protein = round(float(v_nut.get("protein") or 15.0) * (estimated_grams / 350.0), 1)
+                carbs = round(float(v_nut.get("carbs") or 40.0) * (estimated_grams / 350.0), 1)
+                fat = round(float(v_nut.get("fat") or 10.0) * (estimated_grams / 350.0), 1)
+            else:
+                calories = round(350.0 * (estimated_grams / 350.0))
+                protein = round(15.0 * (estimated_grams / 350.0), 1)
+                carbs = round(45.0 * (estimated_grams / 350.0), 1)
+                fat = round(12.0 * (estimated_grams / 350.0), 1)
+
         result = {
+            "name": dish,
             "dish_name": dish,
-            "confidence": confidence,
-            "vision_detail": {
-                "image_quality": vision.get("image_quality", {}),
-                "description": vision.get("description"),
-                "possible_dishes": vision.get("possible_dishes", []),
-                "image_observations": vision.get("image_observations", []),
-                "visible_vs_inferred": vision.get("visible_vs_inferred", {}),
-                "identification_evidence": vision.get("identification_evidence", []),
-                "ingredients": vision.get("ingredients", []),
-                "sub_items": vision.get("sub_items", []),
-                "category": vision.get("category"),
-                "visual_form": vision.get("visual_form"),
-                "instructions": vision.get("instructions"),
-                "portion_description": vision.get("portion_description"),
-                "portion_estimation": vision.get("portion_estimation", {}),
-                "health_context": vision.get("health_context", {}),
-                "dietary_assessment": vision.get("dietary_assessment", {}),
-                "risk_flags": vision.get("risk_flags", []),
-                "recommendations": vision.get("recommendations", {}),
-                "table_rows": vision.get("table_rows", []),
-                "uncertainty": vision.get("uncertainty", {}),
-                "vit_cnn_analysis": vision.get("vit_cnn_analysis", {}),
-                "visual_rag_matches": vision.get("visual_rag_matches", [])
-            },
-            "estimated_nutrition": estimated,
+            "calories": calories,
+            "protein": protein,
+            "carbs": carbs,
+            "fat": fat,
+            "confidence": round(confidence, 2),
+            "estimated_portion": portion_description,
+            "is_food": True,
+            "visible_ingredients": vision.get("visible_ingredients", []),
+            "visual_notes": vision.get("visual_notes", ""),
             "retrieved_nutrition": best,
-            "nutrition_summary": summary,
-            "nutrition_source": (
-                "dish_name_rag_fallback"
-                if estimate_source == "dish_name_rag_fallback"
-                else "rag_with_portion_estimate"
-                if best and estimate_source == "rag_portion_estimate"
-                else "rag_with_vision_estimate"
-                if best and estimated
-                else ("rag" if best else estimate_source)
-            ),
-            "warnings": warnings,
-            "analysis_note": (
-                "Không dùng kết quả RAG nếu payload không liên quan trực tiếp tới món đã nhận diện."
-                if not best else "Dữ liệu RAG đã vượt qua kiểm tra liên quan tới món."
-            )
+            "estimated_nutrition": {
+                "calories": calories,
+                "protein": protein,
+                "carbs": carbs,
+                "fat": fat,
+                "serving_size": portion_description,
+            },
+            "raw_vision": vision,
+            "cache_hit": False,
         }
 
-        answer = await self.llm.answer_food_image(
-            question=question or "Đây là món gì? Hãy phân tích dinh dưỡng và tư vấn.",
-            analysis=result
-        )
-        if answer:
-            result["answer"] = answer
+        # Optional LLM natural language answer if question provided
+        if question:
+            try:
+                answer = await self.llm.answer_food_image(
+                    question=question,
+                    analysis=result
+                )
+                if answer:
+                    result["answer"] = answer
+            except Exception as e:
+                print(f"[FoodAnalysis] LLM answer failed: {e}")
 
-        result["cache_hit"] = False
-
-        # Persist BEFORE user tracking so cache write failures don't block
-        # the tracking insert (and vice versa).
+        # Save to response cache
         self._response_cache_put(cache_key, result)
 
-        # STEP 7: USER TRACK
+        # STEP 6: USER TRACKING
         if user_id:
-            self.user_tracking.log_meal(user_id, result)
+            try:
+                self.user_tracking.log_meal(user_id, result)
+            except Exception as exc:
+                print("[FoodAnalysis] log_meal failed:", exc)
 
         return result

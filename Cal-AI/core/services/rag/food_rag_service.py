@@ -262,6 +262,23 @@ class FoodRAGService:
     ):
 
         if text_vec is None and image_vec is None:
+            if dish_name:
+                query_filter = self._name_filter(dish_name)
+                scroll_hits = []
+                for col in self.collections:
+                    try:
+                        pts, _ = self.client.scroll(
+                            collection_name=col,
+                            scroll_filter=query_filter,
+                            limit=top_k,
+                            with_payload=True
+                        )
+                        if pts:
+                            scroll_hits.extend(pts)
+                    except Exception:
+                        pass
+                if scroll_hits:
+                    return scroll_hits[:top_k]
             return []
 
         if image_vec is None or text_vec is None:
