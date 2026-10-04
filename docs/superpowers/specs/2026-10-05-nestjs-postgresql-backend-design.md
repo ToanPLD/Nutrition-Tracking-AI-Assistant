@@ -44,9 +44,6 @@ The objective is to re-architect the backend to meet industry enterprise standar
      ```
    - **Global Exception Filter**: Intercepts HTTP and Prisma exceptions, formatting standardized error envelopes without leaking raw database stack traces.
    - **Security**: JWT-based authentication (Bearer token) with `@CurrentUser()` decorator, `bcryptjs` password hashing, and role-based access control (`RolesGuard`).
-5. **AI Hybrid Orchestration**:
-   - Primary: CalAI Python Agent (`http://localhost:8000/query`) with Qdrant vector retrieval.
-   - Fallback: Local Ollama LLM (`llama3.2`) when CalAI Python is offline.
 
 ---
 
@@ -181,22 +178,21 @@ backend/
   - `totalFat`: Float (default 0)
   - Unique Constraint: `[userId, date]`
 
-### 4.4 AI Chat & Meal Schedules
-- `ChatSession`:
+### 4.4 Meal Schedules
+- `MealSchedule`:
   - `id`: Int (PK)
   - `userId`: Int (FK to User)
-  - `startedAt`: DateTime (default now)
-- `ChatMessage`:
-  - `id`: Int (PK)
-  - `sessionId`: Int (FK to ChatSession with Cascade Delete)
-  - `sender`: Enum `Sender` (`USER`, `AI`)
-  - `messageText`: String (Text)
-  - `imageUrl`: String? (Text)
-  - `thinkingSteps`: Json?
-  - `foodInsight`: Json?
+  - `name`: String
+  - `startDate`, `endDate`: DateTime (Date only)
+  - `targetCalories`: Int?
   - `createdAt`: DateTime
-- `MealSchedule` & `MealScheduleItem`:
-  - Support multi-day meal planning and sharing.
+- `MealScheduleItem`:
+  - `id`: Int (PK)
+  - `scheduleId`: Int (FK to MealSchedule with Cascade Delete)
+  - `dayOffset`: Int
+  - `mealType`: Enum `MealType`
+  - `name`: String
+  - `calories`, `protein`, `carbs`, `fat`: Float?
 
 ---
 
@@ -222,16 +218,7 @@ backend/
 - `GET /meals/daily-summary?date=YYYY-MM-DD`: Compare daily intake vs `UserGoal` targets.
 - `DELETE /meals/:id`: Remove meal and atomically recalculate daily summary.
 
-### 5.4 Chat & AI Module (`/api/v1/chat`)
-- `GET /sessions`: List chat history.
-- `POST /messages`:
-  1. Record user message in DB.
-  2. Assemble user context: current day intake vs goal, food preferences (allergies/favorites).
-  3. Call `CalAI` Python Agent (`POST http://localhost:8000/query`).
-  4. If unavailable, fallback gracefully to Ollama (`POST http://localhost:11434/api/generate`).
-  5. Store and return AI response.
-
-### 5.5 Admin Module (`/api/v1/admin`)
+### 5.4 Admin Module (`/api/v1/admin`)
 - Guarded by `@Roles(Role.ADMIN)`.
 - `GET /users`: List users with status.
 - `PATCH /users/:id/status`: Ban/unban users.

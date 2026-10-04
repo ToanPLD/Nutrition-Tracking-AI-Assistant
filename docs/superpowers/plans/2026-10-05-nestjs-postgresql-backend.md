@@ -4,7 +4,7 @@
 
 **Goal:** Build a production-grade enterprise NestJS backend with PostgreSQL and Prisma ORM for CalAI, featuring strict modular architecture, Swagger documentation, and automated data seeding.
 
-**Architecture:** Clean Modular Architecture with NestJS Feature Modules (`auth`, `users`, `foods`, `meals`, `chat`, `admin`). Data persistence via Prisma ORM connected to PostgreSQL. API standardization via Global Interceptors, Exception Filters, and Swagger UI at `/api/docs`.
+**Architecture:** Clean Modular Architecture with NestJS Feature Modules (`auth`, `users`, `foods`, `meals`, `admin`). Data persistence via Prisma ORM connected to PostgreSQL. API standardization via Global Interceptors, Exception Filters, and Swagger UI at `/api/docs`.
 
 **Tech Stack:** NestJS 10+, TypeScript, PostgreSQL, Prisma ORM, Passport JWT, bcryptjs, class-validator, Swagger (`@nestjs/swagger`), Jest.
 
@@ -22,7 +22,6 @@
 - Database migration & seed: Ensure `prisma migrate dev` and `prisma db seed` execute cleanly against local PostgreSQL.
 - Foreign key cascading: Verify that deleting an Account cascades delete to User profile and all associated logs/meals.
 - Atomic nutrition summary: Adding or deleting a meal item must atomically update `DailyNutritionLog`.
-- AI Provider resilience: Ensure failure in CalAI Python service falls back gracefully to Ollama without throwing 500 errors.
 - Authentication & Guard security: Protected routes must reject unauthenticated requests with 401 Unauthorized.
 
 ---
@@ -466,64 +465,7 @@ git commit -m "feat(meals): implement food search, meal logging, and atomic dail
 
 ---
 
-### Task 7: AI Chat Assistant Integration Module (`ChatModule`)
-
-**Files:**
-- Create: `backend/src/modules/chat/dto/send-message.dto.ts`
-- Create: `backend/src/modules/chat/services/ai-orchestrator.service.ts`
-- Create: `backend/src/modules/chat/chat.service.ts`
-- Create: `backend/src/modules/chat/chat.controller.ts`
-- Create: `backend/src/modules/chat/chat.module.ts`
-- Test: `backend/src/modules/chat/ai-orchestrator.service.spec.ts`
-- Test: `backend/test/chat.e2e-spec.ts`
-
-**Interfaces:**
-- Consumes: `PrismaService`, `ConfigService` (`CAL_AI_BASE_URL`, `OLLAMA_BASE_URL`), `UsersService`, `MealsService`.
-- Produces: Chat endpoints (`/api/v1/chat/sessions`, `/api/v1/chat/messages`).
-
-- [ ] **Step 1: Write failing unit test for AI Orchestrator fallback**
-
-```typescript
-// backend/src/modules/chat/ai-orchestrator.service.spec.ts
-describe('AiOrchestratorService - Fallback Resilience', () => {
-  it('falls back to Ollama when CalAI Python agent returns connection error', async () => {
-    // Mock CalAI timeout/failure, expect Ollama call to succeed
-    expect(true).toBe(false); // failing stub
-  });
-});
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `cd backend && pnpm test src/modules/chat/ai-orchestrator.service.spec.ts`
-Expected: FAIL.
-
-- [ ] **Step 3: Implement AI Orchestrator and Chat Service**
-
-1. Implement `AiOrchestratorService`:
-   - Assemble user nutritional context (remaining calories today, dietary restrictions/allergies).
-   - Call CalAI Python Agent (`http://localhost:8000/query`) with 10s timeout.
-   - If error or empty response, fallback to Ollama (`http://localhost:11434/api/generate`) with `llama3.2`.
-   - Return structured AI response with food insights.
-2. Implement `ChatService`:
-   - `getOrCreateSession(userId)`
-   - `sendMessage(userId, dto)`: save user message -> query orchestrator -> save AI response -> return.
-
-- [ ] **Step 4: Run unit and E2E tests**
-
-Run: `cd backend && pnpm test src/modules/chat/ai-orchestrator.service.spec.ts && pnpm test:e2e test/chat.e2e-spec.ts`
-Expected: PASS.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add backend/src/modules/chat backend/test/chat.e2e-spec.ts
-git commit -m "feat(chat): implement ai chat module with calai python agent and ollama fallback"
-```
-
----
-
-### Task 8: Admin Module & End-to-End System Verification
+### Task 7: Admin Module & End-to-End System Verification
 
 **Files:**
 - Create: `backend/src/modules/admin/admin.service.ts`
@@ -552,8 +494,7 @@ Create `backend/scripts/verify-e2e-system.ts` testing:
 2. Admin login with seeded credentials -> token received.
 3. User registration -> user login -> profile update -> goals set.
 4. Food search for "Phở bò" -> log breakfast meal -> check `/api/v1/meals/daily-summary`.
-5. AI chat message test.
-6. Verify Swagger JSON schema is generated at `/api/docs-json`.
+5. Verify Swagger JSON schema is generated at `/api/docs-json`.
 
 - [ ] **Step 3: Run comprehensive verification script**
 
