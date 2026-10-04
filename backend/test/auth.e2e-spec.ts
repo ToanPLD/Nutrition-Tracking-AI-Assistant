@@ -15,6 +15,16 @@ describe('AuthController (e2e)', () => {
 
     app = moduleFixture.createNestApplication();
     app.setGlobalPrefix('api/v1');
+    app.use((req: any, _res: any, next: any) => {
+      if (
+        req.url.startsWith('/api/') &&
+        !req.url.startsWith('/api/v1/') &&
+        !req.url.startsWith('/api/docs')
+      ) {
+        req.url = req.url.replace('/api/', '/api/v1/');
+      }
+      next();
+    });
     app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
     await app.init();
 
@@ -36,7 +46,43 @@ describe('AuthController (e2e)', () => {
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(res.body.data.accessToken).toBeDefined();
+    expect(res.body.data.token).toBeDefined();
+    expect(res.body.data.role).toBe('user');
     expect(res.body.data.account.email).toBe('user@calai.local');
+  });
+
+  it('/api/auth/login (POST) works seamlessly via backward compatibility rewrite', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/api/auth/login')
+      .send({
+        email: 'user@calai.local',
+        password: 'User123!',
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.data.token).toBeDefined();
+    expect(res.body.data.role).toBe('user');
+  });
+
+  it('/api/auth/validate (POST) validates token and returns valid status', async () => {
+    // 1. Get token
+    const loginRes = await request(app.getHttpServer())
+      .post('/api/auth/login')
+      .send({
+        email: 'user@calai.local',
+        password: 'User123!',
+      });
+    const token = loginRes.body.data.accessToken;
+
+    // 2. Validate token
+    const valRes = await request(app.getHttpServer())
+      .post('/api/auth/validate')
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(valRes.status).toBe(200);
+    expect(valRes.body.success).toBe(true);
+    expect(valRes.body.data.valid).toBe(true);
   });
 
   it('/api/v1/auth/login (POST) rejects invalid password with 401', async () => {

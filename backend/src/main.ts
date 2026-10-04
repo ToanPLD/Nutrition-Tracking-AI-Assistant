@@ -10,6 +10,18 @@ async function bootstrap() {
   // 1. Global Prefix
   app.setGlobalPrefix('api/v1');
 
+  // Support both legacy /api and /api/v1 seamlessly
+  app.use((req: any, _res: any, next: any) => {
+    if (
+      req.url.startsWith('/api/') &&
+      !req.url.startsWith('/api/v1/') &&
+      !req.url.startsWith('/api/docs')
+    ) {
+      req.url = req.url.replace('/api/', '/api/v1/');
+    }
+    next();
+  });
+
   // 2. CORS
   app.enableCors({
     origin: '*',

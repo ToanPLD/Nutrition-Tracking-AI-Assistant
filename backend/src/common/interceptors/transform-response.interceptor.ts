@@ -44,6 +44,12 @@ export class TransformResponseInterceptor<T>
           data: actualData ?? null,
           message,
           timestamp: new Date().toISOString(),
+          ...(actualData && typeof actualData === 'object' && 'valid' in actualData
+            ? { valid: (actualData as any).valid }
+            : {}),
+          ...(data && typeof data === 'object' && 'valid' in data
+            ? { valid: (data as any).valid }
+            : {}),
         };
       }),
     );

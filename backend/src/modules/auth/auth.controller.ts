@@ -56,4 +56,24 @@ export class AuthController {
       data: profile,
     };
   }
+
+  @Post('validate')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Validate JWT token' })
+  @ApiResponse({ status: 200, description: 'Token is valid' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  async validateToken(@CurrentUser() user: CurrentUserPayload) {
+    const profile = await this.authService.getMe(user.accountId);
+    return {
+      valid: true,
+      message: 'Token is valid',
+      data: {
+        ...profile,
+        role: profile.role.toLowerCase(),
+        valid: true,
+      },
+    };
+  }
 }

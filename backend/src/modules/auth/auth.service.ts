@@ -61,6 +61,8 @@ export class AuthService {
 
     return {
       accessToken: token,
+      token,
+      role: account.role.toLowerCase(),
       account: {
         id: account.id,
         email: account.email,
@@ -102,6 +104,8 @@ export class AuthService {
 
     return {
       accessToken: token,
+      token,
+      role: account.role.toLowerCase(),
       account: {
         id: account.id,
         email: account.email,
