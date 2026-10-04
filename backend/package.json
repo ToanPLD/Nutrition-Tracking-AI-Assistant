@@ -3,15 +3,15 @@
   "version": "1.0.0",
   "private": true,
   "description": "CalAI backend mock API",
-  "main": "dist/server.js",
+  "main": "dist/main.js",
   "scripts": {
-    "start:dev": "ts-node src/main.ts",
+    "start:dev": "ts-node-dev --respawn --transpile-only src/main.ts",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:e2e": "jest --config test/jest-e2e.json",
-    "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
+    "dev": "ts-node-dev --respawn --transpile-only src/main.ts",
     "build": "tsc",
-    "start": "node dist/server.js",
+    "start": "node dist/main.js",
     "foods:import": "node scripts/import_food_datasets.js"
   },
   "jest": {
